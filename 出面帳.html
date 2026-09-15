@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>出面帳 - 月次出勤集計</title>
+<style>
+  :root{
+    --bg:#14181f;
+    --panel:#1c222c;
+    --panel2:#232a36;
+    --line:#2e3644;
+    --text:#e8ecf2;
+    --sub:#8a94a6;
+    --accent:#e8a33d;
+    --accent2:#4d8dff;
+    --good:#4caf7d;
+    --warn:#e05a5a;
+    --night:#7c6bd6;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:"Hiragino Sans","Yu Gothic",-apple-system,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    min-height:100vh;
+  }
+  header{
+    padding:16px 18px 10px;
+    border-bottom:1px solid var(--line);
+    position:sticky; top:0; background:var(--bg); z-index:20;
+  }
+  header h1{
+    margin:0 0 2px;
+    font-size:19px;
+    font-weight:700;
+    letter-spacing:.02em;
+  }
+  header .sub{color:var(--sub); font-size:12px;}
+  nav{
+    display:flex; gap:2px; margin-top:12px;
+    background:var(--panel); border-radius:10px; padding:3px;
+  }
+  nav button{
+    flex:1; padding:9px 4px; border:none; background:transparent; color:var(--sub);
+    font-size:13px; border-radius:8px; cursor:pointer; font-weight:600;
+  }
+  nav button.active{ background:var(--accent); color:#1a1408; }
+  main{ padding:14px 14px 90px; max-width:760px; margin:0 auto; }
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:14px; margin-bottom:12px;
+  }
+  .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .row.between{ justify-content:space-between; }
+  .datebar{ display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+  .datebar button{
+    background:var(--panel2); border:1px solid var(--line); color:var(--text);
+    width:36px; height:36px; border-radius:9px; font-size:16px; cursor:pointer;
+  }
+  .datebar .datelabel{
+    flex:1; text-align:center; font-size:16px; font-weight:700;
+  }
+  .datebar .datelabel .dow{ font-size:12px; color:var(--sub); font-weight:500; margin-left:4px;}
+  .holiday-toggle{
+    display:flex; align-items:center; gap:6px; font-size:12px; color:var(--sub);
+    background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:6px 10px; cursor:pointer;
+  }
+  .holiday-toggle.on{ color:var(--warn); border-color:var(--warn); }
+  .site-search{
+    width:100%; padding:10px 12px; border-radius:9px; border:1px solid var(--line);
+    background:var(--panel2); color:var(--text); font-size:14px; margin-bottom:10px;
+  }
+  .cat-label{ font-size:12px; color:var(--sub); margin:14px 2px 6px; font-weight:600; }
+  .site-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .site-btn{
+    position:relative;
+    background:var(--panel2); border:1px solid var(--line); border-radius:10px;
+    padding:11px 10px; text-align:left; cursor:pointer; color:var(--text);
+  }
+  .site-btn .name{ font-size:13.5px; font-weight:600; line-height:1.3; }
+  .site-btn .meta{ font-size:11px; color:var(--sub); margin-top:3px; }
+  .site-btn.done{ border-color:var(--good); }
+  .site-btn.done::after{
+    content:"✓"; position:absolute; top:6px; right:8px; color:var(--good); font-size:13px; font-weight:800;
+  }
+  .empty{ color:var(--sub); font-size:13px; padding:20px 4px; text-align:center; }
+  .worker-list{ display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+  .chip{
+    padding:8px 13px; border-radius:20px; border:1px solid var(--line);
+    background:var(--panel2); font-size:13px; cursor:pointer; color:var(--text);
+  }
+  .chip.on{ background:var(--accent); color:#1a1408; border-color:var(--accent); font-weight:700; }
+  .field{ margin-bottom:12px; }
+  .field label{ display:block; font-size:12px; color:var(--sub); margin-bottom:5px; }
+  .field input[type=number], .field select{
+    width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line);
+    background:var(--panel2); color:var(--text); font-size:14px;
+  }
+  .toggle-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 0; border-top:1px solid var(--line);
+  }
+  .switch{ position:relative; width:42px; height:24px; }
+  .switch input{ display:none; }
+  .switch .slider{
+    position:absolute; inset:0; background:var(--panel2); border:1px solid var(--line);
+    border-radius:14px; transition:.15s; cursor:pointer;
+  }
+  .switch .slider::before{
+    content:""; position:absolute; width:18px; height:18px; left:2px; top:2px;
+    background:var(--sub); border-radius:50%; transition:.15s;
+  }
+  .switch input:checked + .slider{ background:var(--night); border-color:var(--night); }
+  .switch input:checked + .slider::before{ transform:translateX(18px); background:#fff; }
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:50;
+    display:flex; align-items:flex-end; justify-content:center;
+  }
+  .modal{
+    background:var(--panel); width:100%; max-width:760px; border-radius:16px 16px 0 0;
+    padding:18px 16px 22px; max-height:85vh; overflow-y:auto;
+  }
+  .modal h3{ margin:0 0 3px; font-size:16px; }
+  .modal .modal-sub{ color:var(--sub); font-size:12px; margin-bottom:14px; }
+  .btnbar{ display:flex; gap:8px; margin-top:16px; }
+  .btn{
+    flex:1; padding:12px; border-radius:10px; border:none; font-size:14px; font-weight:700; cursor:pointer;
+  }
+  .btn.primary{ background:var(--accent); color:#1a1408; }
+  .btn.ghost{ background:var(--panel2); color:var(--text); border:1px solid var(--line); }
+  .btn.danger{ background:transparent; color:var(--warn); border:1px solid var(--warn); }
+  .entry-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:9px 0; border-bottom:1px solid var(--line); font-size:13px;
+  }
+  .entry-row:last-child{ border-bottom:none; }
+  .entry-row .who{ font-weight:600; }
+  .entry-row .detail{ color:var(--sub); font-size:12px; }
+  .tag{
+    display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:6px; margin-left:6px;
+  }
+  .tag.night{ background:rgba(124,107,214,.25); color:#b7abf2; }
+  .tag.ot{ background:rgba(224,90,90,.2); color:#f0a3a3; }
+  .tag.holiday{ background:rgba(232,163,61,.2); color:var(--accent); }
+  .remove-x{ color:var(--sub); font-size:16px; cursor:pointer; padding:2px 6px; }
+  select.plain{
+    background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; font-size:13px;
+  }
+  table.report{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.report th, table.report td{
+    padding:8px 6px; border-bottom:1px solid var(--line); text-align:right;
+  }
+  table.report th:first-child, table.report td:first-child{ text-align:left; }
+  table.report th{ color:var(--sub); font-weight:600; font-size:11px; }
+  .summary-total{ font-weight:800; color:var(--accent); }
+  .section-title{ font-size:15px; font-weight:700; margin:2px 0 10px; }
+  .month-nav{ display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .month-nav .label{ font-size:16px; font-weight:700; flex:1; text-align:center; }
+  .month-nav button{
+    background:var(--panel2); border:1px solid var(--line); color:var(--text);
+    width:34px; height:34px; border-radius:9px; cursor:pointer;
+  }
+  .worker-master-row{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:10px; background:var(--panel2); border-radius:9px; margin-bottom:8px;
+  }
+  .worker-master-row .flags{ display:flex; gap:6px; flex-wrap:wrap; }
+  .small-flag{ font-size:11px; color:var(--sub); }
+  form.inline{ display:flex; gap:8px; margin-bottom:14px; }
+  form.inline input{
+    flex:1; padding:9px 10px; border-radius:8px; border:1px solid var(--line);
+    background:var(--panel2); color:var(--text); font-size:13px;
+  }
+  .site-config-row{
+    background:var(--panel2); border-radius:10px; padding:11px; margin-bottom:8px;
+  }
+  .site-config-row .top{ display:flex; justify-content:space-between; align-items:center; }
+  .site-config-row .rule-desc{ font-size:12px; color:var(--sub); margin-top:4px; }
+  .link-btn{ background:none; border:none; color:var(--accent2); font-size:12.5px; cursor:pointer; padding:0; }
+  .footer-note{ text-align:center; color:var(--sub); font-size:11px; margin-top:18px; padding:0 20px; line-height:1.6; }
+  .radio-grid{ display:flex; gap:8px; flex-wrap:wrap; }
+  .radio-opt{
+    flex:1; min-width:100px; text-align:center; padding:12px 8px; border-radius:10px;
+    border:1px solid var(--line); background:var(--panel2); cursor:pointer; font-size:13px;
+  }
+  .radio-opt.on{ background:var(--accent2); border-color:var(--accent2); color:#fff; font-weight:700; }
+  .pair-slot{ display:flex; gap:8px; margin-bottom:8px; }
+  .pair-slot select{ flex:1; }
+  ::-webkit-scrollbar{ width:6px; }
+  ::-webkit-scrollbar-thumb{ background:var(--line); border-radius:3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>出面帳</h1>
+  <div class="sub">現場をタップして入力 → 月末に自動集計</div>
+  <nav>
+    <button data-tab="entry" class="active">入力</button>
+    <button data-tab="report">月次集計</button>
+    <button data-tab="sites">現場設定</button>
+    <button data-tab="workers">作業員</button>
+  </nav>
+</header>
+
+<main id="main"></main>
+
+<div id="modal-root"></div>
+
+<script>
+/* ===================== ユーティリティ ===================== */
+const DOW = ["日","月","火","水","木","金","土"];
+const pad2 = n => String(n).padStart(2,"0");
+const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+const ym = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}`;
+const uid = () => Math.random().toString(36).slice(2,10);
+
+// 2026年の祝日（自動判定の補助。ズレていたら手動トグルで補正できます）
+const JP_HOLIDAYS_2026 = new Set([
+  "2026-01-01","2026-01-12","2026-02-11","2026-02-23","2026-03-20",
+  "2026-04-29","2026-05-03","2026-05-04","2026-05-05","2026-05-06",
+  "2026-07-20","2026-08-11","2026-09-21","2026-09-22","2026-09-23",
+  "2026-10-12","2026-11-03","2026-11-23"
+]);
+function isHoliday(dateObj, manualOverride){
+  if(manualOverride !== undefined) return manualOverride;
+  const s = ymd(dateObj);
+  const dow = dateObj.getDay();
+  return dow===0 || dow===6 || JP_HOLIDAYS_2026.has(s);
+}
+function isSunOrHoliday(dateObj, manualOverride){
+  if(manualOverride !== undefined) return manualOverride;
+  const s = ymd(dateObj);
+  return dateObj.getDay()===0 || JP_HOLIDAYS_2026.has(s);
+}
+
+/* ===================== ストレージ ===================== */
+async function loadJSON(key, fallback){
+  try{
+    const r = await window.storage.get(key, false);
+    return r ? JSON.parse(r.value) : fallback;
+  }catch(e){ return fallback; }
+}
+async function saveJSON(key, value){
+  try{
+    await window.storage.set(key, JSON.stringify(value), false);
+    return true;
+  }catch(e){ console.error("save failed", key, e); return false; }
+}
+
+/* ===================== 初期現場マスタ ===================== */
+// ruleType: fixed / weekday / bands / headcount / day
+function defaultSites(workers){
+  const idOf = (name) => { const w = workers.find(x=>x.name===name); return w ? w.id : null; };
+  const idsOf = (names) => names.map(idOf).filter(Boolean);
+
+  const roster竣工 = ["西尾","難波","村岡","生見","鎌田","一徳","岩田","馬場","松下(ユ)","木場","ビュウ","マオ","サンディ","山口","関山"];
+
+  return [
+    // ---- 竣工清掃 ----
+    {id:uid(), category:"竣工清掃", name:"竣工清掃", rule:{type:"day"}, assignedWorkers:idsOf(roster竣工)},
+
+    // ---- ビル・マンション管理（日額・夜作業で手当加算）----
+    {id:uid(), category:"マンション・ビル管理", name:"マンション共用部清掃", rule:{type:"day", nightOvertimeDefault:2}, assignedWorkers:idsOf(["酒井","飯干","ラナ"])},
+    {id:uid(), category:"マンション・ビル管理", name:"SOGOレジャー", rule:{type:"day"}, assignedWorkers:idsOf(["八田","柳田","山口"])},
+    {id:uid(), category:"マンション・ビル管理", name:"グランドベース鹿児島中央", rule:{type:"day"}, assignedWorkers:idsOf(["脇(男)","脇(女)","堀越"])},
+    {id:uid(), category:"マンション・ビル管理", name:"合人社 MJRザ・ガーデン上荒田", rule:{type:"day"}, assignedWorkers:idsOf(roster竣工)},
+    {id:uid(), category:"マンション・ビル管理", name:"ランドメンテナンス", rule:{type:"day"}, assignedWorkers:idsOf(["湯田","田中","中村","西元","坂元","米丸","正留"])},
+    {id:uid(), category:"マンション・ビル管理", name:"ホテルニュージョーシン ベッドメーキング", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["末満","家入","清野","池山","上木","ジェネリン","ビック","池田","前迫","橋本","芝田","里園"])},
+    {id:uid(), category:"マンション・ビル管理", name:"グリーンリッチ", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["大庭","佐藤","佐藤（亜）","堀之内","中川","米倉","厚地","里園","満留","安藤","ソン","ビック","ビショー","タマン","テー","宮田（女）","花牟禮","満留（唯）"])},
+    {id:uid(), category:"マンション・ビル管理", name:"鴨池ニュータウン駐車場（前半）", rule:{type:"fixed", hours:9}, assignedWorkers:idsOf(["横瀬","高山","上野","奥","市之瀬","徳重","屋宮","安藤","春成","三嶋","福永","下窪"])},
+    {id:uid(), category:"マンション・ビル管理", name:"鴨池ニュータウン駐車場（後半）", rule:{type:"fixed", hours:8}, assignedWorkers:idsOf(["横瀬","高山","上野","奥","市之瀬","徳重","屋宮","安藤","春成","三嶋","福永","下窪"])},
+    {id:uid(), category:"マンション・ビル管理", name:"シルクイン鹿児島 ベッドメーキング", rule:{type:"fixed", hours:7.5}, assignedWorkers:idsOf(["丸野","中川","松村","片平","井口","有水（警備の人）","上野","前屋敷","ソン","クック","勘代","日高","増山","宮田（女）","藤井","堀之内"])},
+    {id:uid(), category:"マンション・ビル管理", name:"シルクイン鹿児島（責任者）", rule:{type:"fixed", hours:7.5}, assignedWorkers:idsOf(["宮田","中村"])},
+    {id:uid(), category:"廃棄物・本社", name:"廃棄物事業部", rule:{type:"day"}, assignedWorkers:idsOf(["日高（健）","芝生","有村（警備の有村とは別人）","古野","芝生（輝）","緒方","瀬乃口","藤田","渡邊"])},
+    {id:uid(), category:"廃棄物・本社", name:"本社", rule:{type:"day"}, assignedWorkers:idsOf(["山下","迫田","徳永","西","宮田","高橋（女）","迫","中村","佐藤（麻）","佐藤（真）","高橋（清）","馬場口"])},
+
+    // ---- ランドメンテナンス（固定時間・曜日別）----
+    {id:uid(), category:"ランドメンテナンス", name:"エイルM城南通り", rule:{type:"weekday", hoursByDay:{1:7,2:7,3:7,4:7,5:7,6:5}, defaultHours:7}},
+    {id:uid(), category:"ランドメンテナンス", name:"エイルM高麗町（西元さん）", rule:{type:"fixed", hours:7}},
+    {id:uid(), category:"ランドメンテナンス", name:"エイルM国分隼人（坂元さん）", rule:{type:"fixed", hours:8}},
+    {id:uid(), category:"ランドメンテナンス", name:"エイルM上荒田III（米丸さん）", rule:{type:"fixed", hours:5}},
+    {id:uid(), category:"ランドメンテナンス", name:"エイルM城西本通り（正留さん）", rule:{type:"fixed", hours:7}},
+    {id:uid(), category:"ランドメンテナンス", name:"薩来園", rule:{type:"fixed", hours:7}, assignedWorkers:idsOf(["高橋（清）","神村","前野（薩来園）","谷口"])},
+    {id:uid(), category:"ランドメンテナンス", name:"マルヤガーデンズ", rule:{type:"bands", bands:[{id:"A",name:"A",hours:8},{id:"B",name:"B",hours:4},{id:"C",name:"C",hours:4}]}, assignedWorkers:idsOf(["脇田","下地","橋元","山元","君安","スティ","関山（女）","ビック","ジャン","ジェネリン"])},
+    {id:uid(), category:"ランドメンテナンス", name:"丸屋本社", rule:{type:"fixed", hours:3}, assignedWorkers:idsOf(["関山（女）"])},
+    {id:uid(), category:"ランドメンテナンス", name:"環境検査センター（週1回）", rule:{type:"fixed", hours:3.5}, assignedWorkers:idsOf(["福元","脇田"])},
+    {id:uid(), category:"ランドメンテナンス", name:"中央ビルサービス（関山・女）", rule:{type:"fixed", hours:1}, assignedWorkers:idsOf(["関山（女）"])},
+    {id:uid(), category:"ランドメンテナンス", name:"健翔会", rule:{type:"bands", bands:[{id:"A",name:"8H班",hours:8},{id:"B",name:"4H班",hours:4}]}, assignedWorkers:idsOf(["久保","川野","松下","西元"])},
+    {id:uid(), category:"ランドメンテナンス", name:"国土技術コンサルタンツ（関山・女）", rule:{type:"weekday", hoursByDay:{1:2,4:2}, defaultHours:1}, assignedWorkers:idsOf(["関山（女）"])},
+    {id:uid(), category:"ランドメンテナンス", name:"潮風園", rule:{type:"bands", bands:[{id:"A",name:"8H班",hours:8},{id:"B",name:"4H班",hours:4}]}, assignedWorkers:idsOf(["中尾","重信","大松","酒匂"])},
+    {id:uid(), category:"ランドメンテナンス", name:"谷山支社", rule:{type:"day"}, assignedWorkers:idsOf(["濱田","内園","平尾","米森","黒木","久津輪"])},
+
+    // ---- 保険急病センター系 ----
+    {id:uid(), category:"保険・医療系", name:"夜間急病センター（1F・吉田さん）", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["吉田","山﨑","岩下","濱田","久津輪"])},
+    {id:uid(), category:"保険・医療系", name:"福祉交流センター（2F・3F／月木土日）", rule:{type:"fixed", hours:7}, assignedWorkers:idsOf(["吉田","山﨑","岩下","濱田","久津輪"])},
+    {id:uid(), category:"保険・医療系", name:"保険環境試験所", rule:{type:"fixed", hours:6.5}, assignedWorkers:idsOf(["吉田","山﨑","岩下","濱田","久津輪"])},
+    {id:uid(), category:"保険・医療系", name:"武之橋 大山医院（前野さん）", rule:{type:"weekday", hoursByDay:{6:6}, defaultHours:7}, assignedWorkers:idsOf(["前野"])},
+
+    // ---- 維新ふるさと館 ----
+    {id:uid(), category:"維新ふるさと館", name:"維新ふるさと館（平日）", rule:{type:"bands", bands:[{id:"H6",name:"6H",hours:6},{id:"H7",name:"7H",hours:7}]}, assignedWorkers:idsOf(["宮本","坂口","義村"])},
+    {id:uid(), category:"維新ふるさと館", name:"維新ふるさと館（日祝）", rule:{type:"bands", bands:[{id:"H6",name:"6H",hours:6},{id:"H8",name:"8H",hours:8}]}, assignedWorkers:idsOf(["宮本","坂口","義村"])},
+
+    // ---- 交通局 ----
+    {id:uid(), category:"交通局", name:"鹿児島駅 清掃", rule:{type:"fixed", hours:7}, assignedWorkers:idsOf(["松村","下永吉","山元（勉）","堀越","堀越（心）"])},
+    {id:uid(), category:"交通局", name:"鹿児島駅 消毒", rule:{type:"fixed", hours:4}, assignedWorkers:idsOf(["松村","下永吉","山元（勉）","堀越","堀越（心）"])},
+    {id:uid(), category:"交通局", name:"A分岐（濱田・末吉・米倉）", rule:{type:"fixed", hours:8, note:"たまに夜間グリストラップ(馬場さんと一緒)"}, assignedWorkers:idsOf(["濱田","末吉","米倉","牛尾","内園","田中"])},
+    {id:uid(), category:"交通局", name:"B谷山電停清掃（牛尾さん／週末は谷山支社内園さん）", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["濱田","末吉","米倉","牛尾","内園","田中"])},
+
+    // ---- 天文館 ----
+    {id:uid(), category:"天文館", name:"天文館 松村ビル（ビック/ジャン/留学生）", rule:{type:"fixed", hours:1}, assignedWorkers:idsOf(["堀越","岩下","ジャン","ビック","関山（女）"])},
+    {id:uid(), category:"天文館", name:"天文館 十時屋（火・金／堀越さん）", rule:{type:"fixed", hours:3}, assignedWorkers:idsOf(["堀越","岩下","ジャン","ビック","関山（女）"])},
+    {id:uid(), category:"天文館", name:"天文館 諏訪ビル（堀越さん）", rule:{type:"fixed", hours:1}, assignedWorkers:idsOf(["堀越","岩下","ジャン","ビック","関山（女）"])},
+
+    // ---- その他清掃 ----
+    {id:uid(), category:"その他清掃", name:"トヨタカローラ本店清掃（小平田／岩下）", rule:{type:"fixed", hours:6}, assignedWorkers:idsOf(["岩下","小平田"])},
+
+    // ---- 警備（人数依存）----
+    {id:uid(), category:"警備", name:"警備", rule:{type:"day"}, assignedWorkers:idsOf(["有働","前田","浅野","松下","永吉","築浜","有水（警備の人）","有村","小川","中島","水口","吉原"])},
+    {id:uid(), category:"警備", name:"谷山電停（バス転回）", rule:{type:"headcount",
+      solo:{hours:8, overtime:3.5},
+      pair:{each:6, label:"早番/遅番"}
+    }},
+    {id:uid(), category:"警備", name:"脇田電停", rule:{type:"headcount",
+      solo:{hours:8, overtime:4.5, overtimeHoliday:4},
+      pair:{each:6, label:"早番/遅番"}
+    }},
+    {id:uid(), category:"警備", name:"山下分庁舎（小川・中島）", rule:{type:"headcount",
+      solo:{hours:7, overtime:5.5},
+      pair:{each:7, label:"2名時"}
+    }},
+  ];
+}
+
+function defaultWorkers(){
+  const names = ["酒井","柳田","八田","山口","サンディ","西元","坂元","米丸","正留",
+    "関山","吉田","前野","濱田","末吉","米倉","馬場","牛尾","内園","堀越",
+    "小平田","岩下","小川","中島","吉原","水口",
+    "西尾","難波","村岡","生見","鎌田","一徳","岩田","松下(ユ)","木場","ビュウ","マオ","飯干","ラナ","脇(男)","脇(女)",
+    "末満","家入","清野","池山","上木","ジェネリン","ビック","池田","前迫","橋本","芝田","里園",
+    "大庭","佐藤","佐藤（亜）","堀之内","中川","厚地","満留","安藤","ソン","ビショー","タマン","テー","宮田（女）","花牟禮","満留（唯）",
+    "丸野","松村","片平","井口","有水（警備の人）","上野","前屋敷","クック","勘代","日高","増山","藤井",
+    "宮田","中村",
+    "横瀬","高山","奥","市之瀬","徳重","屋宮","春成","三嶋","福永","下窪",
+    "日高（健）","芝生","有村（警備の有村とは別人）","古野","芝生（輝）","緒方","瀬乃口","藤田","渡邊",
+    "山下","迫田","徳永","西","高橋（女）","迫","佐藤（麻）","佐藤（真）","高橋（清）","馬場口",
+    "田中","湯田","神村","谷口","脇田","下地","橋元","山元","君安","スティ","ジャン",
+    "福元","久保","川野","松下","中尾","重信","大松","酒匂","平尾","米森","黒木","久津輪",
+    "山﨑","義村","宮本","坂口","前野（薩来園）",
+    "山元（勉）","下永吉","堀越（心）","有働","前田","浅野","永吉","築浜","有村"];
+  return names.map(n=>({id:uid(), name:n, alwaysHolidayOvertime: n==="吉原"}));
+}
+
+/* ===================== アプリ状態 ===================== */
+let state = {
+  tab:"entry",
+  currentDate: new Date(),
+  reportMonth: ym(new Date()),
+  sites: [],
+  workers: [],
+  entries: {}, // key: yyyy-mm -> array
+  manualHoliday: {}, // key: yyyy-mm-dd -> true/false override
+  siteSearch: "",
+};
+
+async function loadAll(){
+  const existingWorkers = await loadJSON("workers", null);
+  const existingSites = await loadJSON("sites", null);
+  state.workers = existingWorkers || defaultWorkers();
+  state.sites = existingSites || defaultSites(state.workers);
+  if(!existingWorkers) await saveJSON("workers", state.workers);
+  if(!existingSites) await saveJSON("sites", state.sites);
+  state.manualHoliday = await loadJSON("manualHoliday", {});
+  await loadEntriesForMonth(ym(state.currentDate));
+}
+async function loadEntriesForMonth(monthKey){
+  if(!state.entries[monthKey]){
+    state.entries[monthKey] = await loadJSON(`entries:${monthKey}`, []);
+  }
+}
+async function saveEntries(monthKey){
+  await saveJSON(`entries:${monthKey}`, state.entries[monthKey]);
+}
+
+/* ===================== レンダリング ===================== */
+const mainEl = document.getElementById("main");
+const modalRoot = document.getElementById("modal-root");
+
+function render(){
+  if(state.tab==="entry") renderEntry();
+  else if(state.tab==="report") renderReport();
+  else if(state.tab==="sites") renderSites();
+  else if(state.tab==="workers") renderWorkers();
+}
+
+/* ---------- 入力タブ ---------- */
+function renderEntry(){
+  const d = state.currentDate;
+  const key = ymd(d);
+  const monthKey = ym(d);
+  const dayEntries = (state.entries[monthKey]||[]).filter(e=>e.date===key);
+  const manualH = state.manualHoliday[key];
+  const holiday = isHoliday(d, manualH);
+
+  const bySite = {};
+  dayEntries.forEach(e=>{ (bySite[e.siteId] = bySite[e.siteId]||[]).push(e); });
+
+  const cats = [...new Set(state.sites.map(s=>s.category))];
+  const q = state.siteSearch.trim();
+
+  let html = `
+    <div class="datebar">
+      <button onclick="shiftDate(-1)">‹</button>
+      <div class="datelabel">${d.getMonth()+1}月${d.getDate()}日<span class="dow">(${DOW[d.getDay()]})</span></div>
+      <button onclick="shiftDate(1)">›</button>
+    </div>
+    <div class="holiday-toggle ${holiday?'on':''}" onclick="toggleHoliday()">
+      ${holiday ? "🔶 休日扱い（土日祝）":"　平日扱い"}　tap で切替
+    </div>
+    <input class="site-search" placeholder="現場名で検索..." value="${escapeAttr(state.siteSearch)}" oninput="onSearch(this.value)">
+  `;
+
+  cats.forEach(cat=>{
+    const sitesInCat = state.sites.filter(s=>s.category===cat && (!q || s.name.includes(q)));
+    if(sitesInCat.length===0) return;
+    html += `<div class="cat-label">${cat}</div><div class="site-grid">`;
+    sitesInCat.forEach(s=>{
+      const done = bySite[s.id] && bySite[s.id].length>0;
+      const cnt = done ? bySite[s.id].length : 0;
+      html += `<div class="site-btn ${done?'done':''}" onclick="openEntryModal('${s.id}')">
+        <div class="name">${s.name}</div>
+        <div class="meta">${ruleShortLabel(s.rule)}${cnt?` ・入力${cnt}件`:''}</div>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+
+  if(dayEntries.length>0){
+    html += `<div class="cat-label">この日の入力済み一覧</div><div class="card">`;
+    dayEntries.forEach(e=>{
+      const site = state.sites.find(s=>s.id===e.siteId);
+      html += `<div class="entry-row">
+        <div>
+          <span class="who">${e.workerName}</span>
+          <span class="detail">${site?site.name:'?'}</span>
+          ${e.hours!=null?`<span class="detail">・${e.hours}H</span>`:''}
+          ${e.night?`<span class="tag night">夜間</span>`:''}
+          ${e.overtime?`<span class="tag ot">残業${e.overtime}H</span>`:''}
+          ${e.holidayOvertime?`<span class="tag holiday">休日残業</span>`:''}
+        </div>
+        <div class="remove-x" onclick="removeEntry('${e.id}')">✕</div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  mainEl.innerHTML = html;
+}
+function ruleShortLabel(rule){
+  if(rule.type==="fixed") return `固定 ${rule.hours}H`;
+  if(rule.type==="weekday") return `曜日別（基本${rule.defaultHours}H）`;
+  if(rule.type==="bands") return `班別 ${rule.bands.map(b=>b.name+':'+b.hours+'H').join('/')}`;
+  if(rule.type==="headcount") return `人数依存（単独${rule.solo.hours}H+残業/2名${rule.pair.each}H）`;
+  if(rule.type==="day") return `日額（1日）`;
+  return "";
+}
+function escapeAttr(s){ return (s||"").replace(/"/g,"&quot;"); }
+window.onSearch = v => { state.siteSearch = v; renderEntry(); };
+window.shiftDate = async delta => {
+  const d = new Date(state.currentDate);
+  d.setDate(d.getDate()+delta);
+  state.currentDate = d;
+  await loadEntriesForMonth(ym(d));
+  renderEntry();
+};
+window.toggleHoliday = () => {
+  const key = ymd(state.currentDate);
+  const current = isHoliday(state.currentDate, state.manualHoliday[key]);
+  state.manualHoliday[key] = !current;
+  saveJSON("manualHoliday", state.manualHoliday);
+  renderEntry();
+};
+
+/* ---------- 入力モーダル ---------- */
+function workersForSite(site){
+  if(site.assignedWorkers && site.assignedWorkers.length>0){
+    const list = site.assignedWorkers.map(id=>state.workers.find(w=>w.id===id)).filter(Boolean);
+    if(list.length>0) return list;
+  }
+  return state.workers;
+}
+window.openEntryModal = (siteId) => {
+  const site = state.sites.find(s=>s.id===siteId);
+  if(!site) return;
+  const rule = site.rule;
+  let bodyHtml = "";
+  const siteWorkers = workersForSite(site);
+  const workerOptions = siteWorkers.map(w=>`<option value="${w.id}">${w.name}</option>`).join("");
+  const showAllLink = (site.assignedWorkers && site.assignedWorkers.length>0)
+    ? `<button class="link-btn" onclick="showAllWorkers('${site.id}')">担当以外の作業員も表示</button>` : "";
+
+  if(rule.type==="fixed" || rule.type==="weekday" || rule.type==="day"){
+    bodyHtml = `
+      <div class="field">
+        <label>作業員（複数選択可・タップでON/OFF）</label>
+        <div class="worker-list" id="worker-chips">
+          ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
+        </div>
+        ${showAllLink}
+        <button class="link-btn" onclick="addQuickWorker()">＋ 作業員をその場で追加</button>
+      </div>
+      <div class="toggle-row">
+        <span>夜間作業あり（夜間手当＋残業）</span>
+        <label class="switch"><input type="checkbox" id="nightToggle" onchange="onNightToggle()"><span class="slider"></span></label>
+      </div>
+      <div class="field" id="overtimeField" style="display:none;">
+        <label>残業時間（H）</label>
+        <input type="number" step="0.5" id="overtimeInput" placeholder="例：2">
+      </div>
+    `;
+  } else if(rule.type==="bands"){
+    bodyHtml = `
+      <div class="field">
+        <label>班を選択</label>
+        <div class="radio-grid" id="band-radio">
+          ${rule.bands.map(b=>`<div class="radio-opt" data-id="${b.id}" onclick="selectBand(this)">${b.name}（${b.hours}H）</div>`).join("")}
+        </div>
+      </div>
+      <div class="field">
+        <label>作業員（複数選択可）</label>
+        <div class="worker-list" id="worker-chips">
+          ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
+        </div>
+        ${showAllLink}
+        <button class="link-btn" onclick="addQuickWorker()">＋ 作業員をその場で追加</button>
+      </div>
+    `;
+  } else if(rule.type==="headcount"){
+    bodyHtml = `
+      <div class="field">
+        <label>入り方</label>
+        <div class="radio-grid" id="hc-mode">
+          <div class="radio-opt" data-mode="solo" onclick="selectHcMode(this)">1名（本務+残業）</div>
+          <div class="radio-opt" data-mode="pair" onclick="selectHcMode(this)">2名（早番/遅番）</div>
+        </div>
+      </div>
+      <div id="hc-body"></div>
+    `;
+  }
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>${site.name}</h3>
+        <div class="modal-sub">${ruleShortLabel(rule)}　／　${state.currentDate.getMonth()+1}月${state.currentDate.getDate()}日</div>
+        ${bodyHtml}
+        <div class="btnbar">
+          <button class="btn ghost" onclick="closeModal()">閉じる</button>
+          <button class="btn primary" onclick="saveEntryModal('${siteId}')">保存する</button>
+        </div>
+      </div>
+    </div>
+  `;
+  window._modalState = { siteId, bandId:null, hcMode:null, hcSolo:null, hcPairA:null, hcPairB:null };
+};
+window.showAllWorkers = (siteId) => {
+  const chips = document.getElementById("worker-chips");
+  if(!chips) return;
+  const existingIds = new Set([...chips.querySelectorAll(".chip")].map(c=>c.dataset.id));
+  state.workers.forEach(w=>{
+    if(existingIds.has(w.id)) return;
+    const span = document.createElement("span");
+    span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
+    span.onclick = ()=>toggleChip(span);
+    chips.appendChild(span);
+  });
+};
+window.closeModal = () => { modalRoot.innerHTML = ""; };
+window.toggleChip = (el) => { el.classList.toggle("on"); };
+window.onNightToggle = () => {
+  const on = document.getElementById("nightToggle").checked;
+  document.getElementById("overtimeField").style.display = on ? "block":"none";
+};
+window.selectBand = (el) => {
+  document.querySelectorAll("#band-radio .radio-opt").forEach(x=>x.classList.remove("on"));
+  el.classList.add("on");
+  window._modalState.bandId = el.dataset.id;
+};
+window.selectHcMode = (el) => {
+  document.querySelectorAll("#hc-mode .radio-opt").forEach(x=>x.classList.remove("on"));
+  el.classList.add("on");
+  const mode = el.dataset.mode;
+  window._modalState.hcMode = mode;
+  const site = state.sites.find(s=>s.id===window._modalState.siteId);
+  const siteWorkers = site ? workersForSite(site) : state.workers;
+  const workerOptions = siteWorkers.map(w=>`<option value="${w.id}">${w.name}</option>`).join("");
+  const body = document.getElementById("hc-body");
+  if(mode==="solo"){
+    body.innerHTML = `
+      <div class="field">
+        <label>担当者</label>
+        <select class="plain" id="hc-solo-select" style="width:100%">${workerOptions}</select>
+      </div>
+    `;
+  } else {
+    body.innerHTML = `
+      <div class="field">
+        <label>早番</label>
+        <select class="plain" id="hc-pair-a" style="width:100%">${workerOptions}</select>
+      </div>
+      <div class="field">
+        <label>遅番</label>
+        <select class="plain" id="hc-pair-b" style="width:100%">${workerOptions}</select>
+      </div>
+    `;
+  }
+};
+window.addQuickWorker = async () => {
+  const name = prompt("追加する作業員名");
+  if(!name) return;
+  const w = {id:uid(), name:name.trim(), alwaysHolidayOvertime:false};
+  state.workers.push(w);
+  await saveJSON("workers", state.workers);
+  const chips = document.getElementById("worker-chips");
+  if(chips){
+    const span = document.createElement("span");
+    span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
+    span.onclick = ()=>toggleChip(span);
+    chips.appendChild(span);
+  }
+};
+
+window.saveEntryModal = async (siteId) => {
+  const site = state.sites.find(s=>s.id===siteId);
+  const rule = site.rule;
+  const d = state.currentDate;
+  const dateKey = ymd(d);
+  const monthKey = ym(d);
+  const holiday = isHoliday(d, state.manualHoliday[dateKey]);
+  const sunHol = isSunOrHoliday(d, state.manualHoliday[dateKey]);
+  await loadEntriesForMonth(monthKey);
+  const list = state.entries[monthKey];
+  const newEntries = [];
+
+  function pushEntry(workerId, hours, extra={}){
+    const w = state.workers.find(x=>x.id===workerId);
+    if(!w) return;
+    let holidayOvertime = false;
+    if(w.alwaysHolidayOvertime && sunHol) holidayOvertime = true;
+    newEntries.push({
+      id: uid(), date: dateKey, siteId, workerId, workerName: w.name,
+      hours: hours, night: !!extra.night, overtime: extra.overtime||0,
+      holidayOvertime, role: extra.role||null, band: extra.band||null
+    });
+  }
+
+  if(rule.type==="fixed" || rule.type==="weekday" || rule.type==="day"){
+    const chips = document.querySelectorAll("#worker-chips .chip.on");
+    if(chips.length===0){ alert("作業員を選択してください"); return; }
+    const night = document.getElementById("nightToggle") ? document.getElementById("nightToggle").checked : false;
+    const otVal = document.getElementById("overtimeInput") ? parseFloat(document.getElementById("overtimeInput").value)||0 : 0;
+    let hours = null;
+    if(rule.type==="fixed") hours = rule.hours;
+    else if(rule.type==="weekday") hours = (rule.hoursByDay && rule.hoursByDay[d.getDay()]!=null) ? rule.hoursByDay[d.getDay()] : rule.defaultHours;
+    else if(rule.type==="day") hours = null; // 日額（時間は数えない）
+    chips.forEach(c=>pushEntry(c.dataset.id, hours, {night, overtime: night?otVal:0}));
+  } else if(rule.type==="bands"){
+    const bandId = window._modalState.bandId;
+    if(!bandId){ alert("班を選択してください"); return; }
+    const band = rule.bands.find(b=>b.id===bandId);
+    const chips = document.querySelectorAll("#worker-chips .chip.on");
+    if(chips.length===0){ alert("作業員を選択してください"); return; }
+    chips.forEach(c=>pushEntry(c.dataset.id, band.hours, {band: band.name}));
+  } else if(rule.type==="headcount"){
+    const mode = window._modalState.hcMode;
+    if(!mode){ alert("1名／2名を選択してください"); return; }
+    if(mode==="solo"){
+      const wid = document.getElementById("hc-solo-select").value;
+      const ot = sunHol ? (rule.solo.overtimeHoliday!=null?rule.solo.overtimeHoliday:rule.solo.overtime) : rule.solo.overtime;
+      pushEntry(wid, rule.solo.hours, {overtime: ot, role:"単独"});
+    } else {
+      const a = document.getElementById("hc-pair-a").value;
+      const b = document.getElementById("hc-pair-b").value;
+      pushEntry(a, rule.pair.each, {role:"早番"});
+      pushEntry(b, rule.pair.each, {role:"遅番"});
+    }
+  }
+
+  state.entries[monthKey] = list.concat(newEntries);
+  await saveEntries(monthKey);
+  closeModal();
+  renderEntry();
+};
+
+window.removeEntry = async (entryId) => {
+  const monthKey = ym(state.currentDate);
+  state.entries[monthKey] = (state.entries[monthKey]||[]).filter(e=>e.id!==entryId);
+  await saveEntries(monthKey);
+  renderEntry();
+};
+
+/* ---------- 月次集計タブ ---------- */
+async function renderReport(){
+  const monthKey = state.reportMonth;
+  await loadEntriesForMonth(monthKey);
+  const entries = state.entries[monthKey]||[];
+
+  const [y,m] = monthKey.split("-").map(Number);
+  const label = `${y}年${m}月`;
+
+  // 作業員別集計
+  const perWorker = {};
+  entries.forEach(e=>{
+    const key = e.workerId;
+    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), hours:0, night:0, overtime:0, holidayOt:0};
+    perWorker[key].days.add(e.date);
+    perWorker[key].hours += (e.hours||0);
+    if(e.night) perWorker[key].night += 1;
+    perWorker[key].overtime += (e.overtime||0);
+    if(e.holidayOvertime) perWorker[key].holidayOt += (e.hours||0)+(e.overtime||0);
+  });
+  const workerRows = Object.values(perWorker).sort((a,b)=>b.days.size - a.days.size);
+
+  // 現場別集計
+  const perSite = {};
+  entries.forEach(e=>{
+    const site = state.sites.find(s=>s.id===e.siteId);
+    const key = e.siteId;
+    if(!perSite[key]) perSite[key] = {name: site?site.name:"?", days:new Set(), hours:0};
+    perSite[key].days.add(e.date);
+    perSite[key].hours += (e.hours||0);
+  });
+  const siteRows = Object.values(perSite).sort((a,b)=>b.days.size - a.days.size);
+
+  let html = `
+    <div class="month-nav">
+      <button onclick="shiftMonth(-1)">‹</button>
+      <div class="label">${label}</div>
+      <button onclick="shiftMonth(1)">›</button>
+    </div>
+    <div class="card">
+      <div class="section-title">作業員別 集計</div>
+      <table class="report">
+        <tr><th>氏名</th><th>出勤日数</th><th>合計時間</th><th>夜間回数</th><th>残業計</th></tr>
+        ${workerRows.map(r=>`
+          <tr>
+            <td>${r.name}</td>
+            <td class="summary-total">${r.days.size}日</td>
+            <td>${r.hours.toFixed(1)}H</td>
+            <td>${r.night}回</td>
+            <td>${r.overtime.toFixed(1)}H</td>
+          </tr>`).join("") || `<tr><td colspan="5" class="empty">まだ入力がありません</td></tr>`}
+      </table>
+    </div>
+    <div class="card">
+      <div class="section-title">現場別 集計</div>
+      <table class="report">
+        <tr><th>現場</th><th>延べ日数</th><th>合計時間</th></tr>
+        ${siteRows.map(r=>`
+          <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td></tr>
+        `).join("") || `<tr><td colspan="3" class="empty">まだ入力がありません</td></tr>`}
+      </table>
+    </div>
+    <div class="footer-note">
+      「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。
+    </div>
+  `;
+  mainEl.innerHTML = html;
+}
+window.shiftMonth = async (delta) => {
+  const [y,m] = state.reportMonth.split("-").map(Number);
+  const d = new Date(y, m-1+delta, 1);
+  state.reportMonth = ym(d);
+  await loadEntriesForMonth(state.reportMonth);
+  renderReport();
+};
+
+/* ---------- 現場設定タブ ---------- */
+function renderSites(){
+  const cats = [...new Set(state.sites.map(s=>s.category))];
+  let html = `
+    <div class="card">
+      <div class="section-title">新しい現場を追加</div>
+      <form class="inline" onsubmit="return addSite(event)">
+        <input id="newSiteName" placeholder="現場名">
+        <select class="plain" id="newSiteCategory">
+          ${cats.map(c=>`<option>${c}</option>`).join("")}
+          <option value="__new__">＋新しいカテゴリ</option>
+        </select>
+        <select class="plain" id="newSiteRuleType">
+          <option value="fixed">固定時間</option>
+          <option value="day">日額（1日）</option>
+          <option value="bands">班別固定</option>
+          <option value="headcount">人数依存</option>
+        </select>
+      </form>
+      <div class="footer-note" style="margin-top:-6px;">複雑なルール（曜日別・班別の細かい時間・残業計算式）は追加後に一覧の「編集」から詳細設定できます。</div>
+    </div>
+  `;
+  cats.forEach(cat=>{
+    html += `<div class="cat-label">${cat}</div>`;
+    state.sites.filter(s=>s.category===cat).forEach(s=>{
+      const assignedNames = (s.assignedWorkers||[]).map(id=>{const w=state.workers.find(x=>x.id===id); return w?w.name:null;}).filter(Boolean);
+      html += `<div class="site-config-row">
+        <div class="top">
+          <strong>${s.name}</strong>
+          <button class="link-btn" onclick="deleteSite('${s.id}')">削除</button>
+        </div>
+        <div class="rule-desc">${ruleShortLabel(s.rule)}</div>
+        ${assignedNames.length ? `<div class="rule-desc">担当：${assignedNames.join("・")}</div>` : ""}
+      </div>`;
+    });
+  });
+  mainEl.innerHTML = html;
+}
+window.addSite = async (ev) => {
+  ev.preventDefault();
+  const name = document.getElementById("newSiteName").value.trim();
+  if(!name) return false;
+  let category = document.getElementById("newSiteCategory").value;
+  if(category === "__new__"){
+    category = prompt("新しいカテゴリ名") || "その他";
+  }
+  const ruleType = document.getElementById("newSiteRuleType").value;
+  let rule;
+  if(ruleType==="fixed"){
+    const h = parseFloat(prompt("固定時間（H）を入力", "8")) || 8;
+    rule = {type:"fixed", hours:h};
+  } else if(ruleType==="day"){
+    rule = {type:"day"};
+  } else if(ruleType==="bands"){
+    rule = {type:"bands", bands:[{id:"A",name:"A",hours:8},{id:"B",name:"B",hours:4}]};
+  } else if(ruleType==="headcount"){
+    rule = {type:"headcount", solo:{hours:8, overtime:3.5}, pair:{each:6, label:"早番/遅番"}};
+  }
+  state.sites.push({id:uid(), category, name, rule});
+  await saveJSON("sites", state.sites);
+  renderSites();
+  return false;
+};
+window.deleteSite = async (id) => {
+  if(!confirm("この現場を削除しますか？（過去の入力データは残ります）")) return;
+  state.sites = state.sites.filter(s=>s.id!==id);
+  await saveJSON("sites", state.sites);
+  renderSites();
+};
+
+/* ---------- 作業員タブ ---------- */
+function renderWorkers(){
+  let html = `
+    <div class="card">
+      <div class="section-title">作業員を追加</div>
+      <form class="inline" onsubmit="return addWorker(event)">
+        <input id="newWorkerName" placeholder="氏名">
+        <button class="btn primary" style="flex:0 0 auto; padding:9px 16px;">追加</button>
+      </form>
+    </div>
+    <div class="cat-label">作業員一覧（${state.workers.length}名）</div>
+  `;
+  state.workers.forEach(w=>{
+    html += `<div class="worker-master-row">
+      <div>
+        <div>${w.name}</div>
+        <div class="small-flag">${w.alwaysHolidayOvertime?'土日祝は常に残業扱い ✓':''}</div>
+      </div>
+      <div class="flags">
+        <button class="link-btn" onclick="toggleHolidayFlag('${w.id}')">${w.alwaysHolidayOvertime?'解除':'土日祝は残業扱いにする'}</button>
+        <button class="link-btn" style="color:var(--warn);" onclick="deleteWorker('${w.id}')">削除</button>
+      </div>
+    </div>`;
+  });
+  html += `<div class="footer-note">「土日祝は常に残業扱い」は、吉原さんのように現場のルールに関わらず個人単位で土日祝の勤務が全部残業になる人向けの設定です。</div>`;
+  mainEl.innerHTML = html;
+}
+window.addWorker = async (ev) => {
+  ev.preventDefault();
+  const name = document.getElementById("newWorkerName").value.trim();
+  if(!name) return false;
+  state.workers.push({id:uid(), name, alwaysHolidayOvertime:false});
+  await saveJSON("workers", state.workers);
+  renderWorkers();
+  return false;
+};
+window.toggleHolidayFlag = async (id) => {
+  const w = state.workers.find(x=>x.id===id);
+  w.alwaysHolidayOvertime = !w.alwaysHolidayOvertime;
+  await saveJSON("workers", state.workers);
+  renderWorkers();
+};
+window.deleteWorker = async (id) => {
+  if(!confirm("この作業員を削除しますか？")) return;
+  state.workers = state.workers.filter(w=>w.id!==id);
+  await saveJSON("workers", state.workers);
+  renderWorkers();
+};
+
+/* ===================== タブ切替 & 初期化 ===================== */
+document.querySelectorAll("nav button").forEach(btn=>{
+  btn.addEventListener("click", async ()=>{
+    document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    state.tab = btn.dataset.tab;
+    if(state.tab==="entry") await loadEntriesForMonth(ym(state.currentDate));
+    render();
+  });
+});
+
+(async function init(){
+  mainEl.innerHTML = `<div class="empty">読み込み中...</div>`;
+  await loadAll();
+  render();
+})();
+</script>
+</body>
+</html>

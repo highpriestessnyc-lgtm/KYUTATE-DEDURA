@@ -235,6 +235,16 @@ function isSunOrHoliday(dateObj, manualOverride){
   const s = ymd(dateObj);
   return dateObj.getDay()===0 || JP_HOLIDAYS_2026.has(s);
 }
+function hoursForWorker(rule, workerId, dayOfWeek){
+  if(rule.type==="fixed"){
+    if(rule.hoursOverride && rule.hoursOverride[workerId]!=null) return rule.hoursOverride[workerId];
+    return rule.hours;
+  }
+  if(rule.type==="weekday"){
+    return (rule.hoursByDay && rule.hoursByDay[dayOfWeek]!=null) ? rule.hoursByDay[dayOfWeek] : rule.defaultHours;
+  }
+  return null;
+}
 
 /* ===================== Supabase接続 ===================== */
 const SUPABASE_URL = "https://gebjrhwfaoyjgmysplhb.supabase.co";
@@ -472,8 +482,7 @@ window.quickToggleWorker = async (siteId, workerId) => {
       if(!w) return;
       const rule = site.rule;
       let hours = null;
-      if(rule.type==="fixed") hours = rule.hours;
-      else if(rule.type==="weekday") hours = (rule.hoursByDay && rule.hoursByDay[d.getDay()]!=null) ? rule.hoursByDay[d.getDay()] : rule.defaultHours;
+      if(rule.type==="fixed" || rule.type==="weekday") hours = hoursForWorker(rule, workerId, d.getDay());
       const holidayOvertime = !!(w.alwaysHolidayOvertime && sunHol);
       const [row] = await sb("demen_entries", { method:"POST", body:[{
         date:dateKey, site_id:siteId, worker_id:workerId, worker_name:w.name,
@@ -661,15 +670,24 @@ window.selectHcMode = (el) => {
       </div>
     `;
   } else {
+    const rule = site.rule;
+    const otOptions = Array.from({length:25}, (_,i)=>i*0.5).map(v=>`<option value="${v}" ${v===rule.pair.each?'selected':''}>${v}H</option>`).join("");
     body.innerHTML = `
       <div class="field">
         <label>早番</label>
-        <select class="plain" id="hc-pair-a" style="width:100%">${workerOptions}</select>
+        <div class="row" style="gap:8px;">
+          <select class="plain" id="hc-pair-a" style="flex:1;">${workerOptions}</select>
+          <select class="plain" id="hc-pair-a-hours" style="width:90px;">${otOptions}</select>
+        </div>
       </div>
       <div class="field">
         <label>遅番</label>
-        <select class="plain" id="hc-pair-b" style="width:100%">${workerOptions}</select>
+        <div class="row" style="gap:8px;">
+          <select class="plain" id="hc-pair-b" style="flex:1;">${workerOptions}</select>
+          <select class="plain" id="hc-pair-b-hours" style="width:90px;">${otOptions}</select>
+        </div>
       </div>
+      <div class="footer-note" style="margin:-4px 0 4px;">通常はそれぞれ${rule.pair.each}Hですが、イレギュラーな時間（例：一人4H・一人8H）にも変更できます。</div>
     `;
   }
 };
@@ -720,13 +738,11 @@ window.saveEntryModal = async (siteId) => {
     const night = document.getElementById("nightToggle") ? document.getElementById("nightToggle").checked : false;
     const otVal = document.getElementById("overtimeInput") ? parseFloat(document.getElementById("overtimeInput").value)||0 : 0;
     const otIds = night ? new Set([...document.querySelectorAll("#ot-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
-    let hours = null;
-    if(rule.type==="fixed") hours = rule.hours;
-    else if(rule.type==="weekday") hours = (rule.hoursByDay && rule.hoursByDay[d.getDay()]!=null) ? rule.hoursByDay[d.getDay()] : rule.defaultHours;
-    else if(rule.type==="day") hours = null; // 日額（時間は数えない）
     chips.forEach(c=>{
-      const isOt = otIds.has(c.dataset.id);
-      pushEntry(c.dataset.id, hours, {night: isOt, overtime: isOt ? otVal : 0});
+      const wid = c.dataset.id;
+      const hours = (rule.type==="day") ? null : hoursForWorker(rule, wid, d.getDay());
+      const isOt = otIds.has(wid);
+      pushEntry(wid, hours, {night: isOt, overtime: isOt ? otVal : 0});
     });
   } else if(rule.type==="bands"){
     let any = false;
@@ -750,8 +766,10 @@ window.saveEntryModal = async (siteId) => {
     } else {
       const a = document.getElementById("hc-pair-a").value;
       const b = document.getElementById("hc-pair-b").value;
-      pushEntry(a, rule.pair.each, {role:"早番"});
-      pushEntry(b, rule.pair.each, {role:"遅番"});
+      const aHours = parseFloat(document.getElementById("hc-pair-a-hours").value);
+      const bHours = parseFloat(document.getElementById("hc-pair-b-hours").value);
+      pushEntry(a, isNaN(aHours) ? rule.pair.each : aHours, {role:"早番"});
+      pushEntry(b, isNaN(bHours) ? rule.pair.each : bHours, {role:"遅番"});
     }
   }
 
@@ -1053,13 +1071,30 @@ window.moveSite = async (siteId, dir) => {
   }catch(e){ reportError("並び替えの保存", e); }
 };
 const WEEKDAY_LABELS = ["日","月","火","水","木","金","土"];
-function renderRuleEditor(rule){
+function renderRuleEditor(rule, site){
   if(rule.type==="fixed"){
+    const assignedWorkers = (site && site.assignedWorkers) || [];
+    const overrideRows = assignedWorkers.map(id=>{
+      const w = state.workers.find(x=>x.id===id);
+      if(!w) return "";
+      const val = (rule.hoursOverride && rule.hoursOverride[id]!=null) ? rule.hoursOverride[id] : "";
+      return `
+        <div class="row" style="gap:8px; margin-bottom:6px;">
+          <span style="width:90px; font-size:13px;">${w.name}</span>
+          <input type="number" step="0.5" data-override-worker="${id}" value="${val}" placeholder="基本と同じ" style="flex:1; padding:7px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+        </div>
+      `;
+    }).join("");
     return `
       <div class="field">
-        <label>勤務時間（H）</label>
+        <label>基本の勤務時間（H）</label>
         <input type="number" step="0.5" id="edit-rule-hours" value="${rule.hours}" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;">
       </div>
+      ${overrideRows ? `
+      <div class="field">
+        <label>人によって時間が違う場合はここで個別に指定（空欄は基本時間を使用）</label>
+        ${overrideRows}
+      </div>` : ""}
     `;
   }
   if(rule.type==="day"){
@@ -1120,6 +1155,12 @@ function readRuleEditor(originalRule){
   const rule = JSON.parse(JSON.stringify(originalRule));
   if(rule.type==="fixed"){
     rule.hours = parseFloat(document.getElementById("edit-rule-hours").value) || 0;
+    const overrides = {};
+    document.querySelectorAll("[data-override-worker]").forEach(inp=>{
+      if(inp.value !== "") overrides[inp.dataset.overrideWorker] = parseFloat(inp.value);
+    });
+    if(Object.keys(overrides).length>0) rule.hoursOverride = overrides;
+    else delete rule.hoursOverride;
   } else if(rule.type==="weekday"){
     rule.defaultHours = parseFloat(document.getElementById("edit-rule-default").value) || 0;
     const hoursByDay = {};
@@ -1155,7 +1196,7 @@ window.openSiteEdit = (siteId) => {
           <label>現場名</label>
           <input type="text" id="editSiteName" value="${escapeAttr(site.name)}" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;">
         </div>
-        ${renderRuleEditor(site.rule)}
+        ${renderRuleEditor(site.rule, site)}
         <div class="field">
           <label>担当作業員（タップでON/OFF・空にすると全員から選択できます）</label>
           <div class="worker-list" id="edit-worker-chips">

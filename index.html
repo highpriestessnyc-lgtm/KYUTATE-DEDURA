@@ -697,10 +697,14 @@ window.saveEntryModal = async (siteId) => {
   const monthKey = ym(d);
   const sunHol = isSunOrHoliday(d, state.manualHoliday[dateKey]);
   const newRows = [];
+  const existingKeys = new Set((state.entries[monthKey]||[]).filter(e=>e.date===dateKey && e.siteId===siteId).map(e=>e.workerId));
+  let skipped = 0;
 
   function pushEntry(workerId, hours, extra={}){
     const w = state.workers.find(x=>x.id===workerId);
     if(!w) return;
+    if(existingKeys.has(workerId)){ skipped++; return; }
+    existingKeys.add(workerId);
     let holidayOvertime = false;
     if(w.alwaysHolidayOvertime && sunHol) holidayOvertime = true;
     newRows.push({
@@ -751,7 +755,11 @@ window.saveEntryModal = async (siteId) => {
     }
   }
 
-  if(newRows.length===0) return;
+  if(newRows.length===0){
+    if(skipped>0) alert(`その${skipped}名は既にこの現場・この日で登録済みのため、スキップしました。`);
+    else alert("作業員を選択してください");
+    return;
+  }
   try{
     const inserted = await sb("demen_entries", {method:"POST", body:newRows});
     const mapped = inserted.map(r=>({
@@ -762,6 +770,7 @@ window.saveEntryModal = async (siteId) => {
     state.entries[monthKey] = (state.entries[monthKey]||[]).concat(mapped);
     closeModal();
     renderEntry();
+    if(skipped>0) alert(`${skipped}名は既に登録済みのためスキップしました。`);
   }catch(e){ reportError("出勤の保存", e); }
 };
 

@@ -266,9 +266,9 @@ function defaultSites(workers){
     {id:uid(), category:"マンション・ビル管理", name:"マンション共用部清掃", rule:{type:"day", nightOvertimeDefault:2}, assignedWorkers:idsOf(["酒井","飯干","ラナ"])},
     {id:uid(), category:"マンション・ビル管理", name:"SOGOレジャー", rule:{type:"day"}, assignedWorkers:idsOf(["八田","柳田","山口"])},
     {id:uid(), category:"マンション・ビル管理", name:"グランドベース鹿児島中央", rule:{type:"day"}, assignedWorkers:idsOf(["脇(男)","脇(女)","堀越"])},
-    {id:uid(), category:"マンション・ビル管理", name:"合人社 MJRザ・ガーデン上荒田", rule:{type:"day"}, assignedWorkers:idsOf(roster竣工)},
+    {id:uid(), category:"マンション・ビル管理", name:"合人社", rule:{type:"day"}, assignedWorkers:idsOf(roster竣工)},
     {id:uid(), category:"マンション・ビル管理", name:"ランドメンテナンス", rule:{type:"day"}, assignedWorkers:idsOf(["湯田","田中","中村","西元","坂元","米丸","正留"])},
-    {id:uid(), category:"マンション・ビル管理", name:"ホテルニュージョーシン ベッドメーキング", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["末満","家入","清野","池山","上木","ジェネリン","ビック","池田","前迫","橋本","芝田","里園"])},
+    {id:uid(), category:"マンション・ビル管理", name:"ホテルニューニシノ ベッドメーキング", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["末満","家入","清野","池山","上木","ジェネリン","ビック","池田","前迫","橋本","芝田","里園"])},
     {id:uid(), category:"マンション・ビル管理", name:"グリーンリッチ", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["大庭","佐藤","佐藤（亜）","堀之内","中川","米倉","厚地","里園","満留","安藤","ソン","ビック","ビショー","タマン","テー","宮田（女）","花牟禮","満留（唯）"])},
     {id:uid(), category:"マンション・ビル管理", name:"鴨池ニュータウン駐車場（前半）", rule:{type:"fixed", hours:9}, assignedWorkers:idsOf(["横瀬","高山","上野","奥","市之瀬","徳重","屋宮","安藤","春成","三嶋","福永","下窪"])},
     {id:uid(), category:"マンション・ビル管理", name:"鴨池ニュータウン駐車場（後半）", rule:{type:"fixed", hours:8}, assignedWorkers:idsOf(["横瀬","高山","上野","奥","市之瀬","徳重","屋宮","安藤","春成","三嶋","福永","下窪"])},
@@ -363,6 +363,7 @@ let state = {
   entries: {}, // key: yyyy-mm -> array
   manualHoliday: {}, // key: yyyy-mm-dd -> true/false override
   siteSearch: "",
+  quickMode: false,
 };
 
 async function loadAll(){
@@ -373,6 +374,7 @@ async function loadAll(){
   if(!existingWorkers) await saveJSON("workers", state.workers);
   if(!existingSites) await saveJSON("sites", state.sites);
   state.manualHoliday = await loadJSON("manualHoliday", {});
+  state.quickMode = await loadJSON("quickMode", false);
   await loadEntriesForMonth(ym(state.currentDate));
 }
 async function loadEntriesForMonth(monthKey){
@@ -419,6 +421,10 @@ function renderEntry(){
     <div class="holiday-toggle ${holiday?'on':''}" onclick="toggleHoliday()">
       ${holiday ? "🔶 休日扱い（土日祝）":"　平日扱い"}　tap で切替
     </div>
+    <div class="toggle-row" style="border-top:none; padding-top:2px;">
+      <span>ワンタップ入力モード（現場カードに名前が直接出る）</span>
+      <label class="switch"><input type="checkbox" id="quickModeToggle" ${state.quickMode?'checked':''} onchange="toggleQuickMode()"><span class="slider"></span></label>
+    </div>
     <input class="site-search" placeholder="現場名で検索..." value="${escapeAttr(state.siteSearch)}" oninput="onSearch(this.value)">
   `;
 
@@ -427,12 +433,28 @@ function renderEntry(){
     if(sitesInCat.length===0) return;
     html += `<div class="cat-label">${cat}</div><div class="site-grid">`;
     sitesInCat.forEach(s=>{
-      const done = bySite[s.id] && bySite[s.id].length>0;
-      const cnt = done ? bySite[s.id].length : 0;
-      html += `<div class="site-btn ${done?'done':''}" onclick="openEntryModal('${s.id}')">
-        <div class="name">${s.name}</div>
-        <div class="meta">${ruleShortLabel(s.rule)}${cnt?` ・入力${cnt}件`:''}</div>
-      </div>`;
+      const doneEntries = bySite[s.id] || [];
+      const done = doneEntries.length>0;
+      const canQuick = state.quickMode && (s.rule.type==="fixed" || s.rule.type==="weekday" || s.rule.type==="day") && s.assignedWorkers && s.assignedWorkers.length>0;
+
+      if(canQuick){
+        const doneIds = new Set(doneEntries.map(e=>e.workerId));
+        const people = s.assignedWorkers.map(id=>state.workers.find(w=>w.id===id)).filter(Boolean);
+        html += `<div class="site-btn quick ${done?'done':''}" style="grid-column:1 / -1;">
+          <div class="row between" onclick="openEntryModal('${s.id}')">
+            <div class="name">${s.name}</div>
+            <div class="meta">${ruleShortLabel(s.rule)}${done?` ・${doneEntries.length}件`:''}</div>
+          </div>
+          <div class="worker-list" style="margin-top:8px;">
+            ${people.map(w=>`<span class="chip ${doneIds.has(w.id)?'on':''}" onclick="event.stopPropagation();quickToggleWorker('${s.id}','${w.id}')">${w.name}</span>`).join("")}
+          </div>
+        </div>`;
+      } else {
+        html += `<div class="site-btn ${done?'done':''}" onclick="openEntryModal('${s.id}')">
+          <div class="name">${s.name}</div>
+          <div class="meta">${ruleShortLabel(s.rule)}${done?` ・入力${doneEntries.length}件`:''}</div>
+        </div>`;
+      }
     });
     html += `</div>`;
   });
@@ -480,6 +502,37 @@ window.toggleHoliday = () => {
   const current = isHoliday(state.currentDate, state.manualHoliday[key]);
   state.manualHoliday[key] = !current;
   saveJSON("manualHoliday", state.manualHoliday);
+  renderEntry();
+};
+window.toggleQuickMode = async () => {
+  state.quickMode = !state.quickMode;
+  await saveJSON("quickMode", state.quickMode);
+  renderEntry();
+};
+window.quickToggleWorker = async (siteId, workerId) => {
+  const site = state.sites.find(s=>s.id===siteId);
+  if(!site) return;
+  const d = state.currentDate;
+  const dateKey = ymd(d);
+  const monthKey = ym(d);
+  const sunHol = isSunOrHoliday(d, state.manualHoliday[dateKey]);
+  await loadEntriesForMonth(monthKey);
+  const list = state.entries[monthKey];
+  const existingIdx = list.findIndex(e=>e.siteId===siteId && e.workerId===workerId && e.date===dateKey);
+  if(existingIdx>=0){
+    list.splice(existingIdx,1);
+  } else {
+    const w = state.workers.find(x=>x.id===workerId);
+    if(!w) return;
+    const rule = site.rule;
+    let hours = null;
+    if(rule.type==="fixed") hours = rule.hours;
+    else if(rule.type==="weekday") hours = (rule.hoursByDay && rule.hoursByDay[d.getDay()]!=null) ? rule.hoursByDay[d.getDay()] : rule.defaultHours;
+    const holidayOvertime = !!(w.alwaysHolidayOvertime && sunHol);
+    list.push({id:uid(), date:dateKey, siteId, workerId, workerName:w.name, hours, night:false, overtime:0, holidayOvertime, role:null, band:null});
+  }
+  state.entries[monthKey] = list;
+  await saveEntries(monthKey);
   renderEntry();
 };
 
@@ -801,12 +854,18 @@ function renderSites(){
   `;
   cats.forEach(cat=>{
     html += `<div class="cat-label">${cat}</div>`;
-    state.sites.filter(s=>s.category===cat).forEach(s=>{
+    const sitesInCat = state.sites.filter(s=>s.category===cat);
+    sitesInCat.forEach((s, idx)=>{
       const assignedNames = (s.assignedWorkers||[]).map(id=>{const w=state.workers.find(x=>x.id===id); return w?w.name:null;}).filter(Boolean);
       html += `<div class="site-config-row">
         <div class="top">
           <strong>${s.name}</strong>
-          <button class="link-btn" onclick="deleteSite('${s.id}')">削除</button>
+          <div class="row" style="gap:10px;">
+            <button class="link-btn" onclick="moveSite('${s.id}',-1)" ${idx===0?'disabled style="opacity:.3;"':''}>▲</button>
+            <button class="link-btn" onclick="moveSite('${s.id}',1)" ${idx===sitesInCat.length-1?'disabled style="opacity:.3;"':''}>▼</button>
+            <button class="link-btn" onclick="openSiteEdit('${s.id}')">編集</button>
+            <button class="link-btn" style="color:var(--warn);" onclick="deleteSite('${s.id}')">削除</button>
+          </div>
         </div>
         <div class="rule-desc">${ruleShortLabel(s.rule)}</div>
         ${assignedNames.length ? `<div class="rule-desc">担当：${assignedNames.join("・")}</div>` : ""}
@@ -815,6 +874,57 @@ function renderSites(){
   });
   mainEl.innerHTML = html;
 }
+window.moveSite = async (siteId, dir) => {
+  const site = state.sites.find(s=>s.id===siteId);
+  if(!site) return;
+  const sameCat = state.sites.filter(s=>s.category===site.category);
+  const idx = sameCat.findIndex(s=>s.id===siteId);
+  const swapWith = sameCat[idx+dir];
+  if(!swapWith) return;
+  const globalIdxA = state.sites.findIndex(s=>s.id===site.id);
+  const globalIdxB = state.sites.findIndex(s=>s.id===swapWith.id);
+  [state.sites[globalIdxA], state.sites[globalIdxB]] = [state.sites[globalIdxB], state.sites[globalIdxA]];
+  await saveJSON("sites", state.sites);
+  renderSites();
+};
+window.openSiteEdit = (siteId) => {
+  const site = state.sites.find(s=>s.id===siteId);
+  if(!site) return;
+  const assigned = new Set(site.assignedWorkers||[]);
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>現場を編集</h3>
+        <div class="modal-sub">${site.category}</div>
+        <div class="field">
+          <label>現場名</label>
+          <input type="text" id="editSiteName" value="${escapeAttr(site.name)}" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;">
+        </div>
+        <div class="field">
+          <label>担当作業員（タップでON/OFF・空にすると全員から選択できます）</label>
+          <div class="worker-list" id="edit-worker-chips">
+            ${state.workers.map(w=>`<span class="chip ${assigned.has(w.id)?'on':''}" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
+          </div>
+        </div>
+        <div class="btnbar">
+          <button class="btn ghost" onclick="closeModal()">キャンセル</button>
+          <button class="btn primary" onclick="saveSiteEdit('${siteId}')">保存する</button>
+        </div>
+      </div>
+    </div>
+  `;
+};
+window.saveSiteEdit = async (siteId) => {
+  const site = state.sites.find(s=>s.id===siteId);
+  if(!site) return;
+  const name = document.getElementById("editSiteName").value.trim();
+  if(name) site.name = name;
+  const chosen = [...document.querySelectorAll("#edit-worker-chips .chip.on")].map(c=>c.dataset.id);
+  site.assignedWorkers = chosen;
+  await saveJSON("sites", state.sites);
+  closeModal();
+  renderSites();
+};
 window.addSite = async (ev) => {
   ev.preventDefault();
   const name = document.getElementById("newSiteName").value.trim();

@@ -236,122 +236,34 @@ function isSunOrHoliday(dateObj, manualOverride){
   return dateObj.getDay()===0 || JP_HOLIDAYS_2026.has(s);
 }
 
-/* ===================== ストレージ ===================== */
-const STORAGE_PREFIX = "demenchou:";
-async function loadJSON(key, fallback){
-  try{
-    const v = localStorage.getItem(STORAGE_PREFIX + key);
-    return v!=null ? JSON.parse(v) : fallback;
-  }catch(e){ console.error("load failed", key, e); return fallback; }
+/* ===================== Supabase接続 ===================== */
+const SUPABASE_URL = "https://gebjrhwfaoyjgmysplhb.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlYmpyaHdmYW95amdteXNwbGhiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyOTM0MjAsImV4cCI6MjA5NTg2OTQyMH0.uvRUg94EYo5bKCFJFLjf_bEqA4607gToTDje4HjgauA";
+
+async function sb(path, options={}){
+  const { method="GET", body, prefer, headers={} } = options;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    method,
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      "Prefer": prefer || "return=representation",
+      ...headers
+    },
+    body: body!=null ? JSON.stringify(body) : undefined
+  });
+  if(!res.ok){
+    const text = await res.text().catch(()=>"");
+    throw new Error(`Supabase ${res.status}: ${text.slice(0,300)}`);
+  }
+  if(res.status===204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
-async function saveJSON(key, value){
-  try{
-    localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
-    return true;
-  }catch(e){ console.error("save failed", key, e); alert("保存に失敗しました：" + e.message); return false; }
-}
-
-/* ===================== 初期現場マスタ ===================== */
-// ruleType: fixed / weekday / bands / headcount / day
-function defaultSites(workers){
-  const idOf = (name) => { const w = workers.find(x=>x.name===name); return w ? w.id : null; };
-  const idsOf = (names) => names.map(idOf).filter(Boolean);
-
-  const roster竣工 = ["西尾","難波","村岡","生見","鎌田","一徳","岩田","馬場","松下(ユ)","木場","ビュウ","マオ","サンディ","山口","関山"];
-
-  return [
-    // ---- 竣工清掃 ----
-    {id:uid(), category:"竣工清掃", name:"竣工清掃", rule:{type:"day"}, assignedWorkers:idsOf(roster竣工)},
-
-    // ---- ビル・マンション管理（日額・夜作業で手当加算）----
-    {id:uid(), category:"マンション・ビル管理", name:"マンション共用部清掃", rule:{type:"day", nightOvertimeDefault:2}, assignedWorkers:idsOf(["酒井","飯干","ラナ"])},
-    {id:uid(), category:"マンション・ビル管理", name:"SOGOレジャー", rule:{type:"day"}, assignedWorkers:idsOf(["八田","柳田","山口"])},
-    {id:uid(), category:"マンション・ビル管理", name:"グランドベース鹿児島中央", rule:{type:"day"}, assignedWorkers:idsOf(["脇(男)","脇(女)","堀越"])},
-    {id:uid(), category:"マンション・ビル管理", name:"合人社", rule:{type:"day"}, assignedWorkers:idsOf(roster竣工)},
-    {id:uid(), category:"マンション・ビル管理", name:"ランドメンテナンス", rule:{type:"day"}, assignedWorkers:idsOf(roster竣工)},
-    {id:uid(), category:"マンション・ビル管理", name:"ホテルニューニシノ ベッドメーキング", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["末満","家入","清野","池山","上木","ジェネリン","ビック","池田","前迫","橋本","芝田","里園"])},
-    {id:uid(), category:"マンション・ビル管理", name:"グリーンリッチ", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["大庭","佐藤","佐藤（亜）","堀之内","中川","米倉","厚地","里園","満留","安藤","ソン","ビック","ビショー","タマン","テー","宮田（女）","花牟禮","満留（唯）"])},
-    {id:uid(), category:"マンション・ビル管理", name:"鴨池ニュータウン駐車場（前半）", rule:{type:"fixed", hours:9}, assignedWorkers:idsOf(["横瀬","高山","上野","奥","市之瀬","徳重","屋宮","安藤","春成","三嶋","福永","下窪"])},
-    {id:uid(), category:"マンション・ビル管理", name:"鴨池ニュータウン駐車場（後半）", rule:{type:"fixed", hours:8}, assignedWorkers:idsOf(["横瀬","高山","上野","奥","市之瀬","徳重","屋宮","安藤","春成","三嶋","福永","下窪"])},
-    {id:uid(), category:"マンション・ビル管理", name:"シルクイン鹿児島 ベッドメーキング", rule:{type:"fixed", hours:7.5}, assignedWorkers:idsOf(["丸野","中川","松村","片平","井口","有水（警備の人）","上野","前屋敷","ソン","クック","勘代","日高","増山","宮田（女）","藤井","堀之内"])},
-    {id:uid(), category:"マンション・ビル管理", name:"シルクイン鹿児島（責任者）", rule:{type:"fixed", hours:7.5}, assignedWorkers:idsOf(["宮田","中村"])},
-    {id:uid(), category:"廃棄物・本社", name:"廃棄物事業部", rule:{type:"day"}, assignedWorkers:idsOf(["日高（健）","芝生","有村（警備の有村とは別人）","古野","芝生（輝）","緒方","瀬乃口","藤田","渡邊"])},
-    {id:uid(), category:"廃棄物・本社", name:"本社", rule:{type:"day"}, assignedWorkers:idsOf(["山下","迫田","徳永","西","宮田","高橋（女）","迫","中村","佐藤（麻）","佐藤（真）","高橋（清）","馬場口"])},
-
-    // ---- ランドメンテナンス（固定時間・曜日別）----
-    {id:uid(), category:"ランドメンテナンス", name:"エイルM城南通り", rule:{type:"weekday", hoursByDay:{1:7,2:7,3:7,4:7,5:7,6:5}, defaultHours:7}, assignedWorkers:idsOf(["湯田","田中","中村","西元","坂元","米丸","正留"])},
-    {id:uid(), category:"ランドメンテナンス", name:"エイルM高麗町（西元さん）", rule:{type:"fixed", hours:7}, assignedWorkers:idsOf(["湯田","田中","中村","西元","坂元","米丸","正留"])},
-    {id:uid(), category:"ランドメンテナンス", name:"エイルM国分隼人（坂元さん）", rule:{type:"fixed", hours:8}, assignedWorkers:idsOf(["湯田","田中","中村","西元","坂元","米丸","正留"])},
-    {id:uid(), category:"ランドメンテナンス", name:"エイルM上荒田III（米丸さん）", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["湯田","田中","中村","西元","坂元","米丸","正留"])},
-    {id:uid(), category:"ランドメンテナンス", name:"エイルM城西本通り（正留さん）", rule:{type:"fixed", hours:7}, assignedWorkers:idsOf(["湯田","田中","中村","西元","坂元","米丸","正留"])},
-    {id:uid(), category:"ランドメンテナンス", name:"薩来園", rule:{type:"fixed", hours:7}, assignedWorkers:idsOf(["高橋（清）","神村","前野（薩来園）","谷口"])},
-    {id:uid(), category:"ランドメンテナンス", name:"マルヤガーデンズ", rule:{type:"bands", bands:[{id:"A",name:"A",hours:8},{id:"B",name:"B",hours:4},{id:"C",name:"C",hours:4}]}, assignedWorkers:idsOf(["脇田","下地","橋元","山元","君安","スティ","関山（女）","ビック","ジャン","ジェネリン"])},
-    {id:uid(), category:"ランドメンテナンス", name:"丸屋本社", rule:{type:"fixed", hours:3}, assignedWorkers:idsOf(["関山（女）"])},
-    {id:uid(), category:"ランドメンテナンス", name:"環境検査センター（週1回）", rule:{type:"fixed", hours:3.5}, assignedWorkers:idsOf(["福元","脇田"])},
-    {id:uid(), category:"ランドメンテナンス", name:"中央ビルサービス（関山・女）", rule:{type:"fixed", hours:1}, assignedWorkers:idsOf(["関山（女）"])},
-    {id:uid(), category:"ランドメンテナンス", name:"健翔会", rule:{type:"bands", bands:[{id:"A",name:"8H班",hours:8},{id:"B",name:"4H班",hours:4}]}, assignedWorkers:idsOf(["久保","川野","松下","西元"])},
-    {id:uid(), category:"ランドメンテナンス", name:"国土技術コンサルタンツ（関山・女）", rule:{type:"weekday", hoursByDay:{1:2,4:2}, defaultHours:1}, assignedWorkers:idsOf(["関山（女）"])},
-    {id:uid(), category:"ランドメンテナンス", name:"潮風園", rule:{type:"bands", bands:[{id:"A",name:"8H班",hours:8},{id:"B",name:"4H班",hours:4}]}, assignedWorkers:idsOf(["中尾","重信","大松","酒匂"])},
-    {id:uid(), category:"ランドメンテナンス", name:"谷山支社", rule:{type:"day"}, assignedWorkers:idsOf(["濱田","内園","平尾","米森","黒木","久津輪"])},
-
-    // ---- 保険急病センター系 ----
-    {id:uid(), category:"保険・医療系", name:"夜間急病センター（1F・吉田さん）", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["吉田","山﨑","岩下","濱田","久津輪"])},
-    {id:uid(), category:"保険・医療系", name:"福祉交流センター（2F・3F／月木土日）", rule:{type:"fixed", hours:7}, assignedWorkers:idsOf(["吉田","山﨑","岩下","濱田","久津輪"])},
-    {id:uid(), category:"保険・医療系", name:"保険環境試験所", rule:{type:"fixed", hours:6.5}, assignedWorkers:idsOf(["吉田","山﨑","岩下","濱田","久津輪"])},
-    {id:uid(), category:"保険・医療系", name:"武之橋 大山医院（前野さん）", rule:{type:"weekday", hoursByDay:{6:6}, defaultHours:7}, assignedWorkers:idsOf(["前野"])},
-
-    // ---- 維新ふるさと館 ----
-    {id:uid(), category:"維新ふるさと館", name:"維新ふるさと館（平日）", rule:{type:"bands", bands:[{id:"H6",name:"6H",hours:6},{id:"H7",name:"7H",hours:7}]}, assignedWorkers:idsOf(["宮本","坂口","義村"])},
-    {id:uid(), category:"維新ふるさと館", name:"維新ふるさと館（日祝）", rule:{type:"bands", bands:[{id:"H6",name:"6H",hours:6},{id:"H8",name:"8H",hours:8}]}, assignedWorkers:idsOf(["宮本","坂口","義村"])},
-
-    // ---- 交通局 ----
-    {id:uid(), category:"交通局", name:"鹿児島駅 清掃", rule:{type:"fixed", hours:7}, assignedWorkers:idsOf(["松村","下永吉","山元（勉）","堀越","堀越（心）"])},
-    {id:uid(), category:"交通局", name:"鹿児島駅 消毒", rule:{type:"fixed", hours:4}, assignedWorkers:idsOf(["松村","下永吉","山元（勉）","堀越","堀越（心）"])},
-    {id:uid(), category:"交通局", name:"A分岐（濱田・末吉・米倉）", rule:{type:"fixed", hours:8, note:"たまに夜間グリストラップ(馬場さんと一緒)"}, assignedWorkers:idsOf(["濱田","末吉","米倉","牛尾","内園","田中"])},
-    {id:uid(), category:"交通局", name:"B谷山電停清掃（牛尾さん／週末は谷山支社内園さん）", rule:{type:"fixed", hours:5}, assignedWorkers:idsOf(["濱田","末吉","米倉","牛尾","内園","田中"])},
-
-    // ---- 天文館 ----
-    {id:uid(), category:"天文館", name:"天文館 松村ビル（ビック/ジャン/留学生）", rule:{type:"fixed", hours:1}, assignedWorkers:idsOf(["堀越","岩下","ジャン","ビック","関山（女）"])},
-    {id:uid(), category:"天文館", name:"天文館 十時屋（火・金／堀越さん）", rule:{type:"fixed", hours:3}, assignedWorkers:idsOf(["堀越","岩下","ジャン","ビック","関山（女）"])},
-    {id:uid(), category:"天文館", name:"天文館 諏訪ビル（堀越さん）", rule:{type:"fixed", hours:1}, assignedWorkers:idsOf(["堀越","岩下","ジャン","ビック","関山（女）"])},
-
-    // ---- その他清掃 ----
-    {id:uid(), category:"その他清掃", name:"トヨタカローラ本店清掃（小平田／岩下）", rule:{type:"fixed", hours:6}, assignedWorkers:idsOf(["岩下","小平田"])},
-
-    // ---- 警備（人数依存）----
-    {id:uid(), category:"警備", name:"警備", rule:{type:"day"}, assignedWorkers:idsOf(["有働","前田","浅野","松下","永吉","築浜","有水（警備の人）","有村","小川","中島","水口","吉原"])},
-    {id:uid(), category:"警備", name:"谷山電停（バス転回）", rule:{type:"headcount",
-      solo:{hours:8, overtime:3.5},
-      pair:{each:6, label:"早番/遅番"}
-    }, assignedWorkers:idsOf(["有働","前田","浅野","松下","永吉","築浜","有水（警備の人）","有村","小川","中島","水口","吉原"])},
-    {id:uid(), category:"警備", name:"脇田電停", rule:{type:"headcount",
-      solo:{hours:8, overtime:4.5, overtimeHoliday:4},
-      pair:{each:6, label:"早番/遅番"}
-    }, assignedWorkers:idsOf(["有働","前田","浅野","松下","永吉","築浜","有水（警備の人）","有村","小川","中島","水口","吉原"])},
-    {id:uid(), category:"警備", name:"山下分庁舎（小川・中島）", rule:{type:"headcount",
-      solo:{hours:7, overtime:5.5},
-      pair:{each:7, label:"2名時"}
-    }, assignedWorkers:idsOf(["有働","前田","浅野","松下","永吉","築浜","有水（警備の人）","有村","小川","中島","水口","吉原"])},
-  ];
-}
-
-function defaultWorkers(){
-  const names = ["酒井","柳田","八田","山口","サンディ","西元","坂元","米丸","正留",
-    "関山","吉田","前野","濱田","末吉","米倉","馬場","牛尾","内園","堀越",
-    "小平田","岩下","小川","中島","吉原","水口",
-    "西尾","難波","村岡","生見","鎌田","一徳","岩田","松下(ユ)","木場","ビュウ","マオ","飯干","ラナ","脇(男)","脇(女)",
-    "末満","家入","清野","池山","上木","ジェネリン","ビック","池田","前迫","橋本","芝田","里園",
-    "大庭","佐藤","佐藤（亜）","堀之内","中川","厚地","満留","安藤","ソン","ビショー","タマン","テー","宮田（女）","花牟禮","満留（唯）",
-    "丸野","松村","片平","井口","有水（警備の人）","上野","前屋敷","クック","勘代","日高","増山","藤井",
-    "宮田","中村",
-    "横瀬","高山","奥","市之瀬","徳重","屋宮","春成","三嶋","福永","下窪",
-    "日高（健）","芝生","有村（警備の有村とは別人）","古野","芝生（輝）","緒方","瀬乃口","藤田","渡邊",
-    "山下","迫田","徳永","西","高橋（女）","迫","佐藤（麻）","佐藤（真）","高橋（清）","馬場口",
-    "田中","湯田","神村","谷口","脇田","下地","橋元","山元","君安","スティ","ジャン",
-    "福元","久保","川野","松下","中尾","重信","大松","酒匂","平尾","米森","黒木","久津輪",
-    "山﨑","義村","宮本","坂口","前野（薩来園）",
-    "山元（勉）","下永吉","堀越（心）","有働","前田","浅野","永吉","築浜","有村"];
-  return names.map(n=>({id:uid(), name:n, alwaysHolidayOvertime: n==="吉原"}));
+function reportError(action, e){
+  console.error(action, e);
+  alert(`${action}に失敗しました。ネットワーク接続を確認してください。\n(${e.message})`);
 }
 
 /* ===================== アプリ状態 ===================== */
@@ -365,26 +277,50 @@ let state = {
   manualHoliday: {}, // key: yyyy-mm-dd -> true/false override
   siteSearch: "",
   quickMode: false,
+  wageRate: 0,
 };
 
 async function loadAll(){
-  const existingWorkers = await loadJSON("workers", null);
-  const existingSites = await loadJSON("sites", null);
-  state.workers = existingWorkers || defaultWorkers();
-  state.sites = existingSites || defaultSites(state.workers);
-  if(!existingWorkers) await saveJSON("workers", state.workers);
-  if(!existingSites) await saveJSON("sites", state.sites);
-  state.manualHoliday = await loadJSON("manualHoliday", {});
-  state.quickMode = await loadJSON("quickMode", false);
+  try{
+    const [workersRaw, sitesRaw, settingsRaw] = await Promise.all([
+      sb("demen_workers?select=*&order=name.asc"),
+      sb("demen_sites?select=*&order=sort_order.asc"),
+      sb("demen_settings?select=*"),
+    ]);
+    state.workers = workersRaw.map(w=>({id:w.id, name:w.name, alwaysHolidayOvertime: w.always_holiday_overtime}));
+    state.sites = sitesRaw.map(s=>({id:s.id, category:s.category, name:s.name, sortOrder:s.sort_order, rule:s.rule, assignedWorkers:s.assigned_workers||[]}));
+    const settingsMap = {};
+    (settingsRaw||[]).forEach(r=>{ settingsMap[r.key] = r.value; });
+    state.manualHoliday = settingsMap.manualHoliday || {};
+    state.quickMode = !!settingsMap.quickMode;
+    state.wageRate = settingsMap.wageRate || 0;
+  }catch(e){
+    reportError("データの読み込み", e);
+    state.workers = []; state.sites = []; state.manualHoliday = {}; state.quickMode = false;
+  }
   await loadEntriesForMonth(ym(state.currentDate));
 }
 async function loadEntriesForMonth(monthKey){
-  if(!state.entries[monthKey]){
-    state.entries[monthKey] = await loadJSON(`entries:${monthKey}`, []);
+  const [y,m] = monthKey.split("-").map(Number);
+  const start = `${monthKey}-01`;
+  const end = `${monthKey}-${pad2(new Date(y, m, 0).getDate())}`;
+  try{
+    const rows = await sb(`demen_entries?select=*&date=gte.${start}&date=lte.${end}&order=created_at.asc`);
+    state.entries[monthKey] = rows.map(r=>({
+      id:r.id, date:r.date, siteId:r.site_id, workerId:r.worker_id, workerName:r.worker_name,
+      hours: r.hours!=null ? Number(r.hours) : null, night: r.night, overtime: Number(r.overtime||0),
+      holidayOvertime: r.holiday_overtime, role: r.role, band: r.band
+    }));
+  }catch(e){
+    reportError("出勤データの読み込み", e);
+    state.entries[monthKey] = state.entries[monthKey] || [];
   }
 }
-async function saveEntries(monthKey){
-  await saveJSON(`entries:${monthKey}`, state.entries[monthKey]);
+async function saveSetting(key, value){
+  try{
+    await sb(`demen_settings?on_conflict=key`, { method:"POST", prefer:"resolution=merge-duplicates,return=minimal", body:[{key, value}] });
+    return true;
+  }catch(e){ reportError("設定の保存", e); return false; }
 }
 
 /* ===================== レンダリング ===================== */
@@ -478,7 +414,10 @@ function renderEntry(){
           ${e.overtime?`<span class="tag ot">残業${e.overtime}H</span>`:''}
           ${e.holidayOvertime?`<span class="tag holiday">休日残業</span>`:''}
         </div>
-        <div class="remove-x" onclick="removeEntry('${e.id}')">✕</div>
+        <div class="row" style="gap:4px;">
+          <div class="remove-x" onclick="openEntryEdit('${e.id}')">✎</div>
+          <div class="remove-x" onclick="removeEntry('${e.id}')">✕</div>
+        </div>
       </div>`;
     });
     html += `</div>`;
@@ -503,17 +442,17 @@ window.shiftDate = async delta => {
   await loadEntriesForMonth(ym(d));
   renderEntry();
 };
-window.toggleHoliday = () => {
+window.toggleHoliday = async () => {
   const key = ymd(state.currentDate);
   const current = isHoliday(state.currentDate, state.manualHoliday[key]);
   state.manualHoliday[key] = !current;
-  saveJSON("manualHoliday", state.manualHoliday);
   renderEntry();
+  await saveSetting("manualHoliday", state.manualHoliday);
 };
 window.toggleQuickMode = async () => {
   state.quickMode = !state.quickMode;
-  await saveJSON("quickMode", state.quickMode);
   renderEntry();
+  await saveSetting("quickMode", state.quickMode);
 };
 window.quickToggleWorker = async (siteId, workerId) => {
   const site = state.sites.find(s=>s.id===siteId);
@@ -522,32 +461,43 @@ window.quickToggleWorker = async (siteId, workerId) => {
   const dateKey = ymd(d);
   const monthKey = ym(d);
   const sunHol = isSunOrHoliday(d, state.manualHoliday[dateKey]);
-  await loadEntriesForMonth(monthKey);
-  const list = state.entries[monthKey];
-  const existingIdx = list.findIndex(e=>e.siteId===siteId && e.workerId===workerId && e.date===dateKey);
-  if(existingIdx>=0){
-    list.splice(existingIdx,1);
-  } else {
-    const w = state.workers.find(x=>x.id===workerId);
-    if(!w) return;
-    const rule = site.rule;
-    let hours = null;
-    if(rule.type==="fixed") hours = rule.hours;
-    else if(rule.type==="weekday") hours = (rule.hoursByDay && rule.hoursByDay[d.getDay()]!=null) ? rule.hoursByDay[d.getDay()] : rule.defaultHours;
-    const holidayOvertime = !!(w.alwaysHolidayOvertime && sunHol);
-    list.push({id:uid(), date:dateKey, siteId, workerId, workerName:w.name, hours, night:false, overtime:0, holidayOvertime, role:null, band:null});
-  }
-  state.entries[monthKey] = list;
-  await saveEntries(monthKey);
+  const list = state.entries[monthKey] || [];
+  const existing = list.find(e=>e.siteId===siteId && e.workerId===workerId && e.date===dateKey);
+  try{
+    if(existing){
+      await sb(`demen_entries?id=eq.${existing.id}`, {method:"DELETE", prefer:"return=minimal"});
+      state.entries[monthKey] = list.filter(e=>e.id!==existing.id);
+    } else {
+      const w = state.workers.find(x=>x.id===workerId);
+      if(!w) return;
+      const rule = site.rule;
+      let hours = null;
+      if(rule.type==="fixed") hours = rule.hours;
+      else if(rule.type==="weekday") hours = (rule.hoursByDay && rule.hoursByDay[d.getDay()]!=null) ? rule.hoursByDay[d.getDay()] : rule.defaultHours;
+      const holidayOvertime = !!(w.alwaysHolidayOvertime && sunHol);
+      const [row] = await sb("demen_entries", { method:"POST", body:[{
+        date:dateKey, site_id:siteId, worker_id:workerId, worker_name:w.name,
+        hours, night:false, overtime:0, holiday_overtime:holidayOvertime, role:null, band:null
+      }]});
+      state.entries[monthKey] = [...list, {
+        id:row.id, date:row.date, siteId:row.site_id, workerId:row.worker_id, workerName:row.worker_name,
+        hours: row.hours!=null?Number(row.hours):null, night:row.night, overtime:Number(row.overtime||0),
+        holidayOvertime:row.holiday_overtime, role:row.role, band:row.band
+      }];
+    }
+  }catch(e){ reportError("出勤登録", e); }
   renderEntry();
 };
 window.quickRemoveFromRoster = async (siteId, workerId) => {
   const site = state.sites.find(s=>s.id===siteId);
   if(!site) return;
   if(!confirm("この現場の担当リストからこの人を外しますか？（過去の入力データは残ります）")) return;
-  site.assignedWorkers = (site.assignedWorkers||[]).filter(id=>id!==workerId);
-  await saveJSON("sites", state.sites);
-  renderEntry();
+  const nextAssigned = (site.assignedWorkers||[]).filter(id=>id!==workerId);
+  try{
+    await sb(`demen_sites?id=eq.${site.id}`, {method:"PATCH", prefer:"return=minimal", body:{assigned_workers: nextAssigned}});
+    site.assignedWorkers = nextAssigned;
+    renderEntry();
+  }catch(e){ reportError("担当リストの更新", e); }
 };
 window.quickAddToRoster = async (siteId) => {
   const site = state.sites.find(s=>s.id===siteId);
@@ -558,15 +508,18 @@ window.quickAddToRoster = async (siteId) => {
   const name = prompt(`追加する作業員名を入力（既存の人は名前を入力、新しい人もそのまま入力できます）\n\n既存の候補:\n${list}`);
   if(!name || !name.trim()) return;
   const trimmed = name.trim();
-  let w = state.workers.find(x=>x.name===trimmed);
-  if(!w){
-    w = {id:uid(), name:trimmed, alwaysHolidayOvertime:false};
-    state.workers.push(w);
-    await saveJSON("workers", state.workers);
-  }
-  site.assignedWorkers = [...(site.assignedWorkers||[]), w.id];
-  await saveJSON("sites", state.sites);
-  renderEntry();
+  try{
+    let w = state.workers.find(x=>x.name===trimmed);
+    if(!w){
+      const [row] = await sb("demen_workers", {method:"POST", body:[{name:trimmed, always_holiday_overtime:false}]});
+      w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
+      state.workers.push(w);
+    }
+    const nextAssigned = [...(site.assignedWorkers||[]), w.id];
+    await sb(`demen_sites?id=eq.${site.id}`, {method:"PATCH", prefer:"return=minimal", body:{assigned_workers: nextAssigned}});
+    site.assignedWorkers = nextAssigned;
+    renderEntry();
+  }catch(e){ reportError("担当の追加", e); }
 };
 
 /* ---------- 入力モーダル ---------- */
@@ -679,15 +632,17 @@ window.onNightToggle = () => {
 window.addQuickWorkerAllBands = async () => {
   const name = prompt("追加する作業員名");
   if(!name) return;
-  const w = {id:uid(), name:name.trim(), alwaysHolidayOvertime:false};
-  state.workers.push(w);
-  await saveJSON("workers", state.workers);
-  document.querySelectorAll("[data-band-chips]").forEach(container=>{
-    const span = document.createElement("span");
-    span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
-    span.onclick = ()=>toggleChip(span);
-    container.appendChild(span);
-  });
+  try{
+    const [row] = await sb("demen_workers", {method:"POST", body:[{name:name.trim(), always_holiday_overtime:false}]});
+    const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
+    state.workers.push(w);
+    document.querySelectorAll("[data-band-chips]").forEach(container=>{
+      const span = document.createElement("span");
+      span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
+      span.onclick = ()=>toggleChip(span);
+      container.appendChild(span);
+    });
+  }catch(e){ reportError("作業員の追加", e); }
 };
 window.selectHcMode = (el) => {
   document.querySelectorAll("#hc-mode .radio-opt").forEach(x=>x.classList.remove("on"));
@@ -721,15 +676,17 @@ window.selectHcMode = (el) => {
 window.addQuickWorker = async () => {
   const name = prompt("追加する作業員名");
   if(!name) return;
-  const w = {id:uid(), name:name.trim(), alwaysHolidayOvertime:false};
-  state.workers.push(w);
-  await saveJSON("workers", state.workers);
-  document.querySelectorAll("#worker-chips, #ot-chips").forEach(chips=>{
-    const span = document.createElement("span");
-    span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
-    span.onclick = ()=>toggleChip(span);
-    chips.appendChild(span);
-  });
+  try{
+    const [row] = await sb("demen_workers", {method:"POST", body:[{name:name.trim(), always_holiday_overtime:false}]});
+    const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
+    state.workers.push(w);
+    document.querySelectorAll("#worker-chips, #ot-chips").forEach(chips=>{
+      const span = document.createElement("span");
+      span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
+      span.onclick = ()=>toggleChip(span);
+      chips.appendChild(span);
+    });
+  }catch(e){ reportError("作業員の追加", e); }
 };
 
 window.saveEntryModal = async (siteId) => {
@@ -738,21 +695,18 @@ window.saveEntryModal = async (siteId) => {
   const d = state.currentDate;
   const dateKey = ymd(d);
   const monthKey = ym(d);
-  const holiday = isHoliday(d, state.manualHoliday[dateKey]);
   const sunHol = isSunOrHoliday(d, state.manualHoliday[dateKey]);
-  await loadEntriesForMonth(monthKey);
-  const list = state.entries[monthKey];
-  const newEntries = [];
+  const newRows = [];
 
   function pushEntry(workerId, hours, extra={}){
     const w = state.workers.find(x=>x.id===workerId);
     if(!w) return;
     let holidayOvertime = false;
     if(w.alwaysHolidayOvertime && sunHol) holidayOvertime = true;
-    newEntries.push({
-      id: uid(), date: dateKey, siteId, workerId, workerName: w.name,
+    newRows.push({
+      date: dateKey, site_id: siteId, worker_id: workerId, worker_name: w.name,
       hours: hours, night: !!extra.night, overtime: extra.overtime||0,
-      holidayOvertime, role: extra.role||null, band: extra.band||null
+      holiday_overtime: holidayOvertime, role: extra.role||null, band: extra.band||null
     });
   }
 
@@ -797,17 +751,79 @@ window.saveEntryModal = async (siteId) => {
     }
   }
 
-  state.entries[monthKey] = list.concat(newEntries);
-  await saveEntries(monthKey);
-  closeModal();
-  renderEntry();
+  if(newRows.length===0) return;
+  try{
+    const inserted = await sb("demen_entries", {method:"POST", body:newRows});
+    const mapped = inserted.map(r=>({
+      id:r.id, date:r.date, siteId:r.site_id, workerId:r.worker_id, workerName:r.worker_name,
+      hours: r.hours!=null?Number(r.hours):null, night:r.night, overtime:Number(r.overtime||0),
+      holidayOvertime:r.holiday_overtime, role:r.role, band:r.band
+    }));
+    state.entries[monthKey] = (state.entries[monthKey]||[]).concat(mapped);
+    closeModal();
+    renderEntry();
+  }catch(e){ reportError("出勤の保存", e); }
 };
 
 window.removeEntry = async (entryId) => {
   const monthKey = ym(state.currentDate);
-  state.entries[monthKey] = (state.entries[monthKey]||[]).filter(e=>e.id!==entryId);
-  await saveEntries(monthKey);
-  renderEntry();
+  try{
+    await sb(`demen_entries?id=eq.${entryId}`, {method:"DELETE", prefer:"return=minimal"});
+    state.entries[monthKey] = (state.entries[monthKey]||[]).filter(e=>e.id!==entryId);
+    renderEntry();
+  }catch(e){ reportError("出勤データの削除", e); }
+};
+function findEntryAnyMonth(entryId){
+  for(const key in state.entries){
+    const found = (state.entries[key]||[]).find(e=>e.id===entryId);
+    if(found) return {entry: found, monthKey: key};
+  }
+  return null;
+}
+window.openEntryEdit = (entryId) => {
+  const found = findEntryAnyMonth(entryId);
+  if(!found) return;
+  const e = found.entry;
+  const site = state.sites.find(s=>s.id===e.siteId);
+  const otOptions = Array.from({length:25}, (_,i)=>i*0.5)
+    .map(v=>`<option value="${v}" ${Math.abs(v-(e.overtime||0))<0.01?'selected':''}>${v}H</option>`).join("");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>${e.workerName}</h3>
+        <div class="modal-sub">${site?site.name:'?'}　／　${e.date}${e.hours!=null?`　／　通常${e.hours}H`:''}</div>
+        <div class="toggle-row" style="border-top:none;">
+          <span>残業・夜間作業あり</span>
+          <label class="switch"><input type="checkbox" id="editNightToggle" ${e.night?'checked':''} onchange="onEditNightToggle()"><span class="slider"></span></label>
+        </div>
+        <div class="field" id="editOvertimeField" style="display:${e.night?'block':'none'};">
+          <label>残業時間（H）</label>
+          <select class="plain" id="editOvertimeInput" style="width:100%;">${otOptions}</select>
+        </div>
+        <div class="btnbar">
+          <button class="btn ghost" onclick="closeModal()">キャンセル</button>
+          <button class="btn primary" onclick="saveEntryEdit('${entryId}')">保存する</button>
+        </div>
+      </div>
+    </div>
+  `;
+};
+window.onEditNightToggle = () => {
+  const on = document.getElementById("editNightToggle").checked;
+  document.getElementById("editOvertimeField").style.display = on ? "block" : "none";
+};
+window.saveEntryEdit = async (entryId) => {
+  const found = findEntryAnyMonth(entryId);
+  if(!found) return;
+  const night = document.getElementById("editNightToggle").checked;
+  const overtime = night ? (parseFloat(document.getElementById("editOvertimeInput").value)||0) : 0;
+  try{
+    await sb(`demen_entries?id=eq.${entryId}`, {method:"PATCH", prefer:"return=minimal", body:{night, overtime}});
+    found.entry.night = night;
+    found.entry.overtime = overtime;
+    closeModal();
+    render();
+  }catch(e){ reportError("出勤データの更新", e); }
 };
 
 /* ---------- 月次集計タブ ---------- */
@@ -818,12 +834,13 @@ async function renderReport(){
 
   const [y,m] = monthKey.split("-").map(Number);
   const label = `${y}年${m}月`;
+  const wage = state.wageRate || 0;
 
   // 作業員別集計
   const perWorker = {};
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), hours:0, night:0, overtime:0, holidayOt:0};
+    if(!perWorker[key]) perWorker[key] = {id:key, name:e.workerName, days:new Set(), hours:0, night:0, overtime:0, holidayOt:0};
     perWorker[key].days.add(e.date);
     perWorker[key].hours += (e.hours||0);
     if(e.night) perWorker[key].night += 1;
@@ -837,9 +854,10 @@ async function renderReport(){
   entries.forEach(e=>{
     const site = state.sites.find(s=>s.id===e.siteId);
     const key = e.siteId;
-    if(!perSite[key]) perSite[key] = {name: site?site.name:"?", days:new Set(), hours:0};
+    if(!perSite[key]) perSite[key] = {name: site?site.name:"?", days:new Set(), hours:0, overtime:0};
     perSite[key].days.add(e.date);
     perSite[key].hours += (e.hours||0);
+    perSite[key].overtime += (e.overtime||0);
   });
   const siteRows = Object.values(perSite).sort((a,b)=>b.days.size - a.days.size);
 
@@ -850,11 +868,17 @@ async function renderReport(){
       <button onclick="shiftMonth(1)">›</button>
     </div>
     <div class="card">
-      <div class="section-title">作業員別 集計</div>
+      <div class="field" style="margin-bottom:0;">
+        <label>時給（経費・給与の概算用）</label>
+        <input type="number" step="10" id="wageRateInput" value="${wage||''}" placeholder="例：1000" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;" onchange="setWageRate(this.value)">
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-title">作業員別 集計（タップで内訳）</div>
       <table class="report">
         <tr><th>氏名</th><th>出勤日数</th><th>合計時間</th><th>夜間回数</th><th>残業計</th></tr>
         ${workerRows.map(r=>`
-          <tr>
+          <tr onclick="openWorkerDetail('${r.id}')" style="cursor:pointer;">
             <td>${r.name}</td>
             <td class="summary-total">${r.days.size}日</td>
             <td>${r.hours.toFixed(1)}H</td>
@@ -866,18 +890,85 @@ async function renderReport(){
     <div class="card">
       <div class="section-title">現場別 集計</div>
       <table class="report">
-        <tr><th>現場</th><th>延べ日数</th><th>合計時間</th></tr>
+        <tr><th>現場</th><th>延べ日数</th><th>合計時間</th>${wage?'<th>概算経費</th>':''}</tr>
         ${siteRows.map(r=>`
-          <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td></tr>
-        `).join("") || `<tr><td colspan="3" class="empty">まだ入力がありません</td></tr>`}
+          <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td>${wage?`<td>¥${Math.round((r.hours+r.overtime)*wage).toLocaleString()}</td>`:''}</tr>
+        `).join("") || `<tr><td colspan="${wage?4:3}" class="empty">まだ入力がありません</td></tr>`}
       </table>
     </div>
     <div class="footer-note">
-      「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。
+      「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。概算経費は 時給 ×（合計時間＋残業時間）の簡易計算です。
     </div>
   `;
   mainEl.innerHTML = html;
 }
+window.setWageRate = async (val) => {
+  const num = parseFloat(val) || 0;
+  state.wageRate = num;
+  await saveSetting("wageRate", num);
+  renderReport();
+};
+window.openWorkerDetail = (workerId) => {
+  const monthKey = state.reportMonth;
+  const entries = (state.entries[monthKey]||[]).filter(e=>e.workerId===workerId).sort((a,b)=>a.date.localeCompare(b.date));
+  if(entries.length===0) return;
+  const name = entries[0].workerName;
+  const wage = state.wageRate || 0;
+
+  // 時間枠ごとの日数内訳（日額など hours が null のものは「日額」扱い）
+  const bucket = {};
+  let totalHours = 0, totalOvertime = 0, nightCount = 0;
+  entries.forEach(e=>{
+    const key = e.hours!=null ? `${e.hours}H` : "日額";
+    bucket[key] = (bucket[key]||0) + 1;
+    totalHours += (e.hours||0);
+    totalOvertime += (e.overtime||0);
+    if(e.night) nightCount++;
+  });
+  const bucketKeys = Object.keys(bucket).sort((a,b)=>{
+    if(a==="日額") return 1;
+    if(b==="日額") return -1;
+    return parseFloat(b)-parseFloat(a);
+  });
+  const estimatedPay = (totalHours + totalOvertime) * wage;
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>${name}</h3>
+        <div class="modal-sub">${state.reportMonth} の出勤内訳</div>
+        <div class="card" style="background:var(--panel2); margin-bottom:12px;">
+          <div class="row" style="flex-wrap:wrap; gap:10px;">
+            ${bucketKeys.map(k=>`<div><span class="summary-total">${bucket[k]}</span>日 <span style="color:var(--sub); font-size:12px;">（${k}）</span></div>`).join("")}
+          </div>
+          <div style="margin-top:10px; border-top:1px solid var(--line); padding-top:10px;">
+            <div>合計出勤日数：<b>${entries.length}日</b></div>
+            <div>合計時間：<b>${totalHours.toFixed(1)}H</b>　残業計：<b>${totalOvertime.toFixed(1)}H</b>　夜間：<b>${nightCount}回</b></div>
+            ${wage ? `<div style="margin-top:6px; color:var(--accent); font-weight:700;">概算給与：¥${Math.round(estimatedPay).toLocaleString()}</div>` : ''}
+          </div>
+        </div>
+        <div class="section-title" style="font-size:14px;">明細</div>
+        ${entries.map(e=>{
+          const site = state.sites.find(s=>s.id===e.siteId);
+          return `<div class="entry-row">
+            <div>
+              <span class="who">${e.date.slice(5)}</span>
+              <span class="detail">${site?site.name:'?'}</span>
+              ${e.hours!=null?`<span class="detail">・${e.hours}H</span>`:''}
+              ${e.night?`<span class="tag night">夜間</span>`:''}
+              ${e.overtime?`<span class="tag ot">残業${e.overtime}H</span>`:''}
+              ${e.holidayOvertime?`<span class="tag holiday">休日残業</span>`:''}
+            </div>
+            <div class="remove-x" onclick="openEntryEdit('${e.id}')">✎</div>
+          </div>`;
+        }).join("")}
+        <div class="btnbar">
+          <button class="btn ghost" onclick="closeModal()">閉じる</button>
+        </div>
+      </div>
+    </div>
+  `;
+};
 window.shiftMonth = async (delta) => {
   const [y,m] = state.reportMonth.split("-").map(Number);
   const d = new Date(y, m-1+delta, 1);
@@ -939,10 +1030,109 @@ window.moveSite = async (siteId, dir) => {
   if(!swapWith) return;
   const globalIdxA = state.sites.findIndex(s=>s.id===site.id);
   const globalIdxB = state.sites.findIndex(s=>s.id===swapWith.id);
+  const sortA = state.sites[globalIdxA].sortOrder;
+  const sortB = state.sites[globalIdxB].sortOrder;
   [state.sites[globalIdxA], state.sites[globalIdxB]] = [state.sites[globalIdxB], state.sites[globalIdxA]];
-  await saveJSON("sites", state.sites);
+  state.sites[globalIdxA].sortOrder = sortA;
+  state.sites[globalIdxB].sortOrder = sortB;
   renderSites();
+  try{
+    await Promise.all([
+      sb(`demen_sites?id=eq.${site.id}`, {method:"PATCH", prefer:"return=minimal", body:{sort_order: sortB}}),
+      sb(`demen_sites?id=eq.${swapWith.id}`, {method:"PATCH", prefer:"return=minimal", body:{sort_order: sortA}}),
+    ]);
+  }catch(e){ reportError("並び替えの保存", e); }
 };
+const WEEKDAY_LABELS = ["日","月","火","水","木","金","土"];
+function renderRuleEditor(rule){
+  if(rule.type==="fixed"){
+    return `
+      <div class="field">
+        <label>勤務時間（H）</label>
+        <input type="number" step="0.5" id="edit-rule-hours" value="${rule.hours}" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;">
+      </div>
+    `;
+  }
+  if(rule.type==="day"){
+    return `<div class="footer-note" style="margin:0 0 10px;">日額現場のため時間の設定はありません（出勤日数のみ数えます）。</div>`;
+  }
+  if(rule.type==="weekday"){
+    return `
+      <div class="field">
+        <label>基本時間（H）</label>
+        <input type="number" step="0.5" id="edit-rule-default" value="${rule.defaultHours}" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px; margin-bottom:10px;">
+      </div>
+      <div class="field">
+        <label>曜日ごとの例外（空欄なら基本時間を使用）</label>
+        <div class="row" style="gap:6px; flex-wrap:wrap;">
+          ${WEEKDAY_LABELS.map((lbl,i)=>`
+            <div style="text-align:center;">
+              <div style="font-size:11px; color:var(--sub); margin-bottom:3px;">${lbl}</div>
+              <input type="number" step="0.5" data-weekday="${i}" value="${rule.hoursByDay && rule.hoursByDay[i]!=null ? rule.hoursByDay[i] : ''}" style="width:52px; padding:7px 4px; text-align:center; border-radius:7px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+  if(rule.type==="bands"){
+    return `
+      <div class="field">
+        <label>班ごとの時間（H）</label>
+        ${rule.bands.map(b=>`
+          <div class="row" style="gap:8px; margin-bottom:8px;">
+            <span style="width:60px;">${b.name}班</span>
+            <input type="number" step="0.5" data-band-hours="${b.id}" value="${b.hours}" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+  if(rule.type==="headcount"){
+    return `
+      <div class="field">
+        <label>1名の時（本務時間・残業時間）</label>
+        <div class="row" style="gap:8px;">
+          <input type="number" step="0.5" id="edit-hc-solo-hours" value="${rule.solo.hours}" placeholder="本務H" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+          <input type="number" step="0.5" id="edit-hc-solo-ot" value="${rule.solo.overtime}" placeholder="残業H" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+        </div>
+        <label style="margin-top:8px;">土日祝の残業時間（空欄なら上と同じ）</label>
+        <input type="number" step="0.5" id="edit-hc-solo-ot-holiday" value="${rule.solo.overtimeHoliday!=null?rule.solo.overtimeHoliday:''}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+      </div>
+      <div class="field">
+        <label>2名の時（それぞれの時間）</label>
+        <input type="number" step="0.5" id="edit-hc-pair-each" value="${rule.pair.each}" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+      </div>
+    `;
+  }
+  return "";
+}
+function readRuleEditor(originalRule){
+  const rule = JSON.parse(JSON.stringify(originalRule));
+  if(rule.type==="fixed"){
+    rule.hours = parseFloat(document.getElementById("edit-rule-hours").value) || 0;
+  } else if(rule.type==="weekday"){
+    rule.defaultHours = parseFloat(document.getElementById("edit-rule-default").value) || 0;
+    const hoursByDay = {};
+    document.querySelectorAll("[data-weekday]").forEach(inp=>{
+      if(inp.value !== "") hoursByDay[inp.dataset.weekday] = parseFloat(inp.value);
+    });
+    rule.hoursByDay = hoursByDay;
+  } else if(rule.type==="bands"){
+    document.querySelectorAll("[data-band-hours]").forEach(inp=>{
+      const band = rule.bands.find(b=>b.id===inp.dataset.bandHours);
+      if(band) band.hours = parseFloat(inp.value) || 0;
+    });
+  } else if(rule.type==="headcount"){
+    rule.solo.hours = parseFloat(document.getElementById("edit-hc-solo-hours").value) || 0;
+    rule.solo.overtime = parseFloat(document.getElementById("edit-hc-solo-ot").value) || 0;
+    const holidayVal = document.getElementById("edit-hc-solo-ot-holiday").value;
+    if(holidayVal !== "") rule.solo.overtimeHoliday = parseFloat(holidayVal);
+    else delete rule.solo.overtimeHoliday;
+    rule.pair.each = parseFloat(document.getElementById("edit-hc-pair-each").value) || 0;
+  }
+  return rule;
+}
 window.openSiteEdit = (siteId) => {
   const site = state.sites.find(s=>s.id===siteId);
   if(!site) return;
@@ -956,6 +1146,7 @@ window.openSiteEdit = (siteId) => {
           <label>現場名</label>
           <input type="text" id="editSiteName" value="${escapeAttr(site.name)}" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;">
         </div>
+        ${renderRuleEditor(site.rule)}
         <div class="field">
           <label>担当作業員（タップでON/OFF・空にすると全員から選択できます）</label>
           <div class="worker-list" id="edit-worker-chips">
@@ -974,12 +1165,18 @@ window.saveSiteEdit = async (siteId) => {
   const site = state.sites.find(s=>s.id===siteId);
   if(!site) return;
   const name = document.getElementById("editSiteName").value.trim();
-  if(name) site.name = name;
   const chosen = [...document.querySelectorAll("#edit-worker-chips .chip.on")].map(c=>c.dataset.id);
-  site.assignedWorkers = chosen;
-  await saveJSON("sites", state.sites);
-  closeModal();
-  renderSites();
+  const rule = readRuleEditor(site.rule);
+  try{
+    const body = { assigned_workers: chosen, rule };
+    if(name) body.name = name;
+    await sb(`demen_sites?id=eq.${siteId}`, {method:"PATCH", prefer:"return=minimal", body});
+    if(name) site.name = name;
+    site.assignedWorkers = chosen;
+    site.rule = rule;
+    closeModal();
+    renderSites();
+  }catch(e){ reportError("現場の更新", e); }
 };
 window.addSite = async (ev) => {
   ev.preventDefault();
@@ -1001,16 +1198,21 @@ window.addSite = async (ev) => {
   } else if(ruleType==="headcount"){
     rule = {type:"headcount", solo:{hours:8, overtime:3.5}, pair:{each:6, label:"早番/遅番"}};
   }
-  state.sites.push({id:uid(), category, name, rule});
-  await saveJSON("sites", state.sites);
-  renderSites();
+  const maxSort = state.sites.reduce((m,s)=>Math.max(m, s.sortOrder||0), 0);
+  try{
+    const [row] = await sb("demen_sites", {method:"POST", body:[{category, name, rule, sort_order: maxSort+1, assigned_workers: []}]});
+    state.sites.push({id:row.id, category:row.category, name:row.name, sortOrder:row.sort_order, rule:row.rule, assignedWorkers:row.assigned_workers||[]});
+    renderSites();
+  }catch(e){ reportError("現場の追加", e); }
   return false;
 };
 window.deleteSite = async (id) => {
   if(!confirm("この現場を削除しますか？（過去の入力データは残ります）")) return;
-  state.sites = state.sites.filter(s=>s.id!==id);
-  await saveJSON("sites", state.sites);
-  renderSites();
+  try{
+    await sb(`demen_sites?id=eq.${id}`, {method:"DELETE", prefer:"return=minimal"});
+    state.sites = state.sites.filter(s=>s.id!==id);
+    renderSites();
+  }catch(e){ reportError("現場の削除", e); }
 };
 
 /* ---------- 作業員タブ ---------- */
@@ -1044,22 +1246,30 @@ window.addWorker = async (ev) => {
   ev.preventDefault();
   const name = document.getElementById("newWorkerName").value.trim();
   if(!name) return false;
-  state.workers.push({id:uid(), name, alwaysHolidayOvertime:false});
-  await saveJSON("workers", state.workers);
-  renderWorkers();
+  try{
+    const [row] = await sb("demen_workers", {method:"POST", body:[{name, always_holiday_overtime:false}]});
+    state.workers.push({id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime});
+    renderWorkers();
+  }catch(e){ reportError("作業員の追加", e); }
   return false;
 };
 window.toggleHolidayFlag = async (id) => {
   const w = state.workers.find(x=>x.id===id);
-  w.alwaysHolidayOvertime = !w.alwaysHolidayOvertime;
-  await saveJSON("workers", state.workers);
-  renderWorkers();
+  if(!w) return;
+  const next = !w.alwaysHolidayOvertime;
+  try{
+    await sb(`demen_workers?id=eq.${id}`, {method:"PATCH", prefer:"return=minimal", body:{always_holiday_overtime: next}});
+    w.alwaysHolidayOvertime = next;
+    renderWorkers();
+  }catch(e){ reportError("設定の更新", e); }
 };
 window.deleteWorker = async (id) => {
   if(!confirm("この作業員を削除しますか？")) return;
-  state.workers = state.workers.filter(w=>w.id!==id);
-  await saveJSON("workers", state.workers);
-  renderWorkers();
+  try{
+    await sb(`demen_workers?id=eq.${id}`, {method:"DELETE", prefer:"return=minimal"});
+    state.workers = state.workers.filter(w=>w.id!==id);
+    renderWorkers();
+  }catch(e){ reportError("作業員の削除", e); }
 };
 
 /* ===================== タブ切替 & 初期化 ===================== */

@@ -310,6 +310,19 @@ async function loadAll(){
   }
   await loadEntriesForMonth(ym(state.currentDate));
 }
+window.refreshMasterData = async () => {
+  try{
+    const [workersRaw, sitesRaw] = await Promise.all([
+      sb("demen_workers?select=*&order=name.asc"),
+      sb("demen_sites?select=*&order=sort_order.asc"),
+    ]);
+    state.workers = workersRaw.map(w=>({id:w.id, name:w.name, alwaysHolidayOvertime: w.always_holiday_overtime}));
+    state.sites = sitesRaw.map(s=>({id:s.id, category:s.category, name:s.name, sortOrder:s.sort_order, rule:s.rule, assignedWorkers:s.assigned_workers||[]}));
+    await loadEntriesForMonth(ym(state.currentDate));
+    render();
+    alert("最新のデータに更新しました。");
+  }catch(e){ reportError("データの再読み込み", e); }
+};
 async function loadEntriesForMonth(monthKey){
   const [y,m] = monthKey.split("-").map(Number);
   const start = `${monthKey}-01`;
@@ -372,6 +385,7 @@ function renderEntry(){
       <span>ワンタップ入力モード（現場カードに名前が直接出る）</span>
       <label class="switch"><input type="checkbox" id="quickModeToggle" ${state.quickMode?'checked':''} onchange="toggleQuickMode()"><span class="slider"></span></label>
     </div>
+    <button class="link-btn" style="margin-bottom:10px;" onclick="refreshMasterData()">🔄 現場・作業員の最新データを再読み込み</button>
     <input class="site-search" placeholder="現場名で検索..." value="${escapeAttr(state.siteSearch)}" oninput="onSearch(this.value)">
   `;
 
@@ -412,7 +426,7 @@ function renderEntry(){
   });
 
   if(dayEntries.length>0){
-    html += `<div class="cat-label">この日の入力済み一覧</div><div class="card">`;
+    html += `<div class="cat-label">この日の入力済み一覧（残業を入れる時もここから）</div><div class="card">`;
     dayEntries.forEach(e=>{
       const site = state.sites.find(s=>s.id===e.siteId);
       html += `<div class="entry-row">
@@ -425,7 +439,7 @@ function renderEntry(){
           ${e.holidayOvertime?`<span class="tag holiday">休日残業</span>`:''}
         </div>
         <div class="row" style="gap:4px;">
-          <div class="remove-x" onclick="openEntryEdit('${e.id}')">✎</div>
+          <button type="button" class="chip" style="padding:5px 10px; font-size:12px;" onclick="openEntryEdit('${e.id}')">残業</button>
           <div class="remove-x" onclick="removeEntry('${e.id}')">✕</div>
         </div>
       </div>`;
@@ -552,7 +566,10 @@ window.openEntryModal = (siteId) => {
   if(rule.type==="fixed" || rule.type==="weekday" || rule.type==="day"){
     bodyHtml = `
       <div class="field">
-        <label>作業員（複数選択可・タップでON/OFF）</label>
+        <div class="row between" style="margin-bottom:6px;">
+          <label style="margin:0;">作業員（複数選択可・タップでON/OFF）</label>
+          <button type="button" class="link-btn" onclick="toggleAllChips('worker-chips')">全員選択/解除</button>
+        </div>
         <div class="worker-list" id="worker-chips">
           ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
         </div>
@@ -568,7 +585,10 @@ window.openEntryModal = (siteId) => {
         <select class="plain" id="overtimeInput" style="width:100%; margin-bottom:12px;">
           ${Array.from({length:25}, (_,i)=>i*0.5).map(v=>`<option value="${v}" ${v===1?'selected':''}>${v}H</option>`).join("")}
         </select>
-        <label>残業する人だけタップ（他の人は通常時間のまま入ります）</label>
+        <div class="row between" style="margin-bottom:6px;">
+          <label style="margin:0;">残業する人だけタップ（他の人は通常時間のまま入ります）</label>
+          <button type="button" class="link-btn" onclick="toggleAllChips('ot-chips')">全員選択/解除</button>
+        </div>
         <div class="worker-list" id="ot-chips">
           ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
         </div>
@@ -576,10 +596,13 @@ window.openEntryModal = (siteId) => {
     `;
   } else if(rule.type==="bands"){
     bodyHtml = `
-      <div class="footer-note" style="margin:-4px 0 10px;">班ごとに担当者をタップしてください。複数の班を同時に入力できます。</div>
+      <div class="footer-note" style="margin:-4px 0 10px;">班ごとに担当者をタップしてください。複数の班を同時に入力できます。同じ人が別の班に入っても大丈夫です（例：朝A班・夜C班）。</div>
       ${rule.bands.map(b=>`
         <div class="field">
-          <label>${b.name}班（${b.hours}H）</label>
+          <div class="row between" style="margin-bottom:6px;">
+            <label style="margin:0;">${b.name}班（${b.hours}H）</label>
+            <button type="button" class="link-btn" onclick="toggleAllChips(null, '${b.id}')">全員選択/解除</button>
+          </div>
           <div class="worker-list" data-band-chips="${b.id}">
             ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
           </div>
@@ -634,6 +657,13 @@ window.showAllWorkers = (siteId) => {
 };
 window.closeModal = () => { modalRoot.innerHTML = ""; };
 window.toggleChip = (el) => { el.classList.toggle("on"); };
+window.toggleAllChips = (id, bandId) => {
+  const container = bandId ? document.querySelector(`[data-band-chips="${bandId}"]`) : document.getElementById(id);
+  if(!container) return;
+  const chips = [...container.querySelectorAll(".chip")];
+  const allOn = chips.every(c=>c.classList.contains("on"));
+  chips.forEach(c=>c.classList.toggle("on", !allOn));
+};
 window.onNightToggle = () => {
   const on = document.getElementById("nightToggle").checked;
   document.getElementById("overtimeField").style.display = on ? "block":"none";
@@ -715,14 +745,15 @@ window.saveEntryModal = async (siteId) => {
   const monthKey = ym(d);
   const sunHol = isSunOrHoliday(d, state.manualHoliday[dateKey]);
   const newRows = [];
-  const existingKeys = new Set((state.entries[monthKey]||[]).filter(e=>e.date===dateKey && e.siteId===siteId).map(e=>e.workerId));
+  const existingKeys = new Set((state.entries[monthKey]||[]).filter(e=>e.date===dateKey && e.siteId===siteId).map(e=>`${e.workerId}|${e.band||''}`));
   let skipped = 0;
 
   function pushEntry(workerId, hours, extra={}){
     const w = state.workers.find(x=>x.id===workerId);
     if(!w) return;
-    if(existingKeys.has(workerId)){ skipped++; return; }
-    existingKeys.add(workerId);
+    const key = `${workerId}|${extra.band||''}`;
+    if(existingKeys.has(key)){ skipped++; return; }
+    existingKeys.add(key);
     let holidayOvertime = false;
     if(w.alwaysHolidayOvertime && sunHol) holidayOvertime = true;
     newRows.push({
@@ -986,7 +1017,7 @@ window.openWorkerDetail = (workerId) => {
               ${e.overtime?`<span class="tag ot">残業${e.overtime}H</span>`:''}
               ${e.holidayOvertime?`<span class="tag holiday">休日残業</span>`:''}
             </div>
-            <div class="remove-x" onclick="openEntryEdit('${e.id}')">✎</div>
+            <button type="button" class="chip" style="padding:5px 10px; font-size:12px;" onclick="openEntryEdit('${e.id}')">残業</button>
           </div>`;
         }).join("")}
         <div class="btnbar">

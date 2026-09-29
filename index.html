@@ -967,7 +967,7 @@ async function renderReport(){
     <div class="card">
       <div class="section-title">作業員別 集計（タップで内訳）</div>
       <table class="report">
-        <tr><th>氏名</th><th>出勤日数</th><th>合計時間</th><th>夜間回数</th><th>残業計</th></tr>
+        <tr><th>氏名</th><th>出勤日数</th><th>合計時間</th><th>夜間回数</th><th>残業計</th>${wage?'<th>概算給与</th>':''}</tr>
         ${workerRows.map(r=>`
           <tr onclick="openWorkerDetail('${r.id}')" style="cursor:pointer;">
             <td>${r.name}</td>
@@ -975,7 +975,8 @@ async function renderReport(){
             <td>${r.hours.toFixed(1)}H</td>
             <td>${r.night}回</td>
             <td>${r.overtime.toFixed(1)}H</td>
-          </tr>`).join("") || `<tr><td colspan="5" class="empty">まだ入力がありません</td></tr>`}
+            ${wage?`<td class="summary-total">¥${Math.round((r.hours+r.overtime)*wage).toLocaleString()}</td>`:''}
+          </tr>`).join("") || `<tr><td colspan="${wage?6:5}" class="empty">まだ入力がありません</td></tr>`}
       </table>
     </div>
     <div class="card">
@@ -986,6 +987,7 @@ async function renderReport(){
           <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td>${wage?`<td>¥${Math.round((r.hours+r.overtime)*wage).toLocaleString()}</td>`:''}</tr>
         `).join("") || `<tr><td colspan="${wage?4:3}" class="empty">まだ入力がありません</td></tr>`}
       </table>
+      ${wage ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line); font-weight:700; color:var(--accent);">現場合計 概算経費：¥${Math.round(siteRows.reduce((sum,r)=>sum+(r.hours+r.overtime)*wage,0)).toLocaleString()}</div>` : ''}
     </div>
     <div class="footer-note">
       「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。概算経費は 時給 ×（合計時間＋残業時間）の簡易計算です。

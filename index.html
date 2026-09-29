@@ -328,8 +328,16 @@ async function loadEntriesForMonth(monthKey){
   const start = `${monthKey}-01`;
   const end = `${monthKey}-${pad2(new Date(y, m, 0).getDate())}`;
   try{
-    const rows = await sb(`demen_entries?select=*&date=gte.${start}&date=lte.${end}&order=created_at.asc`);
-    state.entries[monthKey] = rows.map(r=>({
+    let all = [];
+    let offset = 0;
+    const pageSize = 1000;
+    while(true){
+      const rows = await sb(`demen_entries?select=*&date=gte.${start}&date=lte.${end}&order=created_at.asc&limit=${pageSize}&offset=${offset}`);
+      all = all.concat(rows);
+      if(rows.length < pageSize) break;
+      offset += pageSize;
+    }
+    state.entries[monthKey] = all.map(r=>({
       id:r.id, date:r.date, siteId:r.site_id, workerId:r.worker_id, workerName:r.worker_name,
       hours: r.hours!=null ? Number(r.hours) : null, night: r.night, overtime: Number(r.overtime||0),
       holidayOvertime: r.holiday_overtime, role: r.role, band: r.band
@@ -577,8 +585,21 @@ window.openEntryModal = (siteId) => {
         <button class="link-btn" onclick="addQuickWorker()">＋ 作業員をその場で追加</button>
       </div>
       <div class="toggle-row">
-        <span>残業・夜間作業がある人がいる</span>
+        <span>夜間作業をした人がいる</span>
         <label class="switch"><input type="checkbox" id="nightToggle" onchange="onNightToggle()"><span class="slider"></span></label>
+      </div>
+      <div class="field" id="nightField" style="display:none;">
+        <div class="row between" style="margin-bottom:6px;">
+          <label style="margin:0;">夜間作業をした人だけタップ</label>
+          <button type="button" class="link-btn" onclick="toggleAllChips('night-chips')">全員選択/解除</button>
+        </div>
+        <div class="worker-list" id="night-chips">
+          ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
+        </div>
+      </div>
+      <div class="toggle-row">
+        <span>残業がある人がいる</span>
+        <label class="switch"><input type="checkbox" id="otToggle" onchange="onOtToggle()"><span class="slider"></span></label>
       </div>
       <div class="field" id="overtimeField" style="display:none;">
         <label>残業時間（H）</label>
@@ -641,7 +662,7 @@ window.openEntryModal = (siteId) => {
 };
 window.showAllWorkers = (siteId) => {
   const containers = [
-    ...document.querySelectorAll("#worker-chips, #ot-chips, [data-band-chips]")
+    ...document.querySelectorAll("#worker-chips, #night-chips, #ot-chips, [data-band-chips]")
   ];
   if(containers.length===0) return;
   containers.forEach(chips=>{
@@ -666,6 +687,10 @@ window.toggleAllChips = (id, bandId) => {
 };
 window.onNightToggle = () => {
   const on = document.getElementById("nightToggle").checked;
+  document.getElementById("nightField").style.display = on ? "block":"none";
+};
+window.onOtToggle = () => {
+  const on = document.getElementById("otToggle").checked;
   document.getElementById("overtimeField").style.display = on ? "block":"none";
 };
 window.addQuickWorkerAllBands = async () => {
@@ -728,7 +753,7 @@ window.addQuickWorker = async () => {
     const [row] = await sb("demen_workers", {method:"POST", body:[{name:name.trim(), always_holiday_overtime:false}]});
     const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
     state.workers.push(w);
-    document.querySelectorAll("#worker-chips, #ot-chips").forEach(chips=>{
+    document.querySelectorAll("#worker-chips, #night-chips, #ot-chips").forEach(chips=>{
       const span = document.createElement("span");
       span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
       span.onclick = ()=>toggleChip(span);
@@ -766,14 +791,17 @@ window.saveEntryModal = async (siteId) => {
   if(rule.type==="fixed" || rule.type==="weekday" || rule.type==="day"){
     const chips = document.querySelectorAll("#worker-chips .chip.on");
     if(chips.length===0){ alert("作業員を選択してください"); return; }
-    const night = document.getElementById("nightToggle") ? document.getElementById("nightToggle").checked : false;
+    const nightOn = document.getElementById("nightToggle") ? document.getElementById("nightToggle").checked : false;
+    const otOn = document.getElementById("otToggle") ? document.getElementById("otToggle").checked : false;
     const otVal = document.getElementById("overtimeInput") ? parseFloat(document.getElementById("overtimeInput").value)||0 : 0;
-    const otIds = night ? new Set([...document.querySelectorAll("#ot-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
+    const nightIds = nightOn ? new Set([...document.querySelectorAll("#night-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
+    const otIds = otOn ? new Set([...document.querySelectorAll("#ot-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
     chips.forEach(c=>{
       const wid = c.dataset.id;
       const hours = (rule.type==="day") ? null : hoursForWorker(rule, wid, d.getDay());
+      const isNight = nightIds.has(wid);
       const isOt = otIds.has(wid);
-      pushEntry(wid, hours, {night: isOt, overtime: isOt ? otVal : 0});
+      pushEntry(wid, hours, {night: isNight, overtime: isOt ? otVal : 0});
     });
   } else if(rule.type==="bands"){
     let any = false;
@@ -851,10 +879,14 @@ window.openEntryEdit = (entryId) => {
         <h3>${e.workerName}</h3>
         <div class="modal-sub">${site?site.name:'?'}　／　${e.date}${e.hours!=null?`　／　通常${e.hours}H`:''}</div>
         <div class="toggle-row" style="border-top:none;">
-          <span>残業・夜間作業あり</span>
-          <label class="switch"><input type="checkbox" id="editNightToggle" ${e.night?'checked':''} onchange="onEditNightToggle()"><span class="slider"></span></label>
+          <span>夜間作業だった</span>
+          <label class="switch"><input type="checkbox" id="editNightToggle" ${e.night?'checked':''}><span class="slider"></span></label>
         </div>
-        <div class="field" id="editOvertimeField" style="display:${e.night?'block':'none'};">
+        <div class="toggle-row">
+          <span>残業がある</span>
+          <label class="switch"><input type="checkbox" id="editOtToggle" ${e.overtime?'checked':''} onchange="onEditOtToggle()"><span class="slider"></span></label>
+        </div>
+        <div class="field" id="editOvertimeField" style="display:${e.overtime?'block':'none'};">
           <label>残業時間（H）</label>
           <select class="plain" id="editOvertimeInput" style="width:100%;">${otOptions}</select>
         </div>
@@ -866,15 +898,16 @@ window.openEntryEdit = (entryId) => {
     </div>
   `;
 };
-window.onEditNightToggle = () => {
-  const on = document.getElementById("editNightToggle").checked;
+window.onEditOtToggle = () => {
+  const on = document.getElementById("editOtToggle").checked;
   document.getElementById("editOvertimeField").style.display = on ? "block" : "none";
 };
 window.saveEntryEdit = async (entryId) => {
   const found = findEntryAnyMonth(entryId);
   if(!found) return;
   const night = document.getElementById("editNightToggle").checked;
-  const overtime = night ? (parseFloat(document.getElementById("editOvertimeInput").value)||0) : 0;
+  const otOn = document.getElementById("editOtToggle").checked;
+  const overtime = otOn ? (parseFloat(document.getElementById("editOvertimeInput").value)||0) : 0;
   try{
     await sb(`demen_entries?id=eq.${entryId}`, {method:"PATCH", prefer:"return=minimal", body:{night, overtime}});
     found.entry.night = night;

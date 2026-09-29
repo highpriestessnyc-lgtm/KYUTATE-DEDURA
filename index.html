@@ -572,6 +572,7 @@ window.openEntryModal = (siteId) => {
     ? `<button class="link-btn" onclick="showAllWorkers('${site.id}')">担当以外の作業員も表示</button>` : "";
 
   if(rule.type==="fixed" || rule.type==="weekday" || rule.type==="day"){
+    const showCustomHours = (rule.type==="fixed" || rule.type==="weekday");
     bodyHtml = `
       <div class="field">
         <div class="row between" style="margin-bottom:6px;">
@@ -584,6 +585,24 @@ window.openEntryModal = (siteId) => {
         ${showAllLink}
         <button class="link-btn" onclick="addQuickWorker()">＋ 作業員をその場で追加</button>
       </div>
+      ${showCustomHours ? `
+      <div class="toggle-row">
+        <span>今日だけ時間を変える（通常${rule.type==="fixed"?rule.hours:rule.defaultHours}H）</span>
+        <label class="switch"><input type="checkbox" id="customHoursToggle" onchange="onCustomHoursToggle()"><span class="slider"></span></label>
+      </div>
+      <div class="field" id="customHoursField" style="display:none;">
+        <label>今日の時間（H）　※ここで選んだ作業員だけに適用されます</label>
+        <select class="plain" id="customHoursInput" style="width:100%; margin-bottom:12px;">
+          ${Array.from({length:25}, (_,i)=>i*0.5).map(v=>`<option value="${v}">${v}H</option>`).join("")}
+        </select>
+        <div class="row between" style="margin-bottom:6px;">
+          <label style="margin:0;">時間を変える人だけタップ（他の人は通常時間のまま）</label>
+          <button type="button" class="link-btn" onclick="toggleAllChips('custom-hours-chips')">全員選択/解除</button>
+        </div>
+        <div class="worker-list" id="custom-hours-chips">
+          ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
+        </div>
+      </div>` : ''}
       <div class="toggle-row">
         <span>夜間作業をした人がいる</span>
         <label class="switch"><input type="checkbox" id="nightToggle" onchange="onNightToggle()"><span class="slider"></span></label>
@@ -606,6 +625,7 @@ window.openEntryModal = (siteId) => {
         <select class="plain" id="overtimeInput" style="width:100%; margin-bottom:12px;">
           ${Array.from({length:25}, (_,i)=>i*0.5).map(v=>`<option value="${v}" ${v===1?'selected':''}>${v}H</option>`).join("")}
         </select>
+        <div class="footer-note" style="margin:-2px 0 6px;">「作業員」で選んでいない人をここだけでタップすると、出勤扱いにせず残業だけを記録できます（例：吉原さんが日当なしで残業だけ入る時）。</div>
         <div class="row between" style="margin-bottom:6px;">
           <label style="margin:0;">残業する人だけタップ（他の人は通常時間のまま入ります）</label>
           <button type="button" class="link-btn" onclick="toggleAllChips('ot-chips')">全員選択/解除</button>
@@ -662,7 +682,7 @@ window.openEntryModal = (siteId) => {
 };
 window.showAllWorkers = (siteId) => {
   const containers = [
-    ...document.querySelectorAll("#worker-chips, #night-chips, #ot-chips, [data-band-chips]")
+    ...document.querySelectorAll("#worker-chips, #custom-hours-chips, #night-chips, #ot-chips, [data-band-chips]")
   ];
   if(containers.length===0) return;
   containers.forEach(chips=>{
@@ -692,6 +712,10 @@ window.onNightToggle = () => {
 window.onOtToggle = () => {
   const on = document.getElementById("otToggle").checked;
   document.getElementById("overtimeField").style.display = on ? "block":"none";
+};
+window.onCustomHoursToggle = () => {
+  const on = document.getElementById("customHoursToggle").checked;
+  document.getElementById("customHoursField").style.display = on ? "block":"none";
 };
 window.addQuickWorkerAllBands = async () => {
   const name = prompt("追加する作業員名");
@@ -753,7 +777,7 @@ window.addQuickWorker = async () => {
     const [row] = await sb("demen_workers", {method:"POST", body:[{name:name.trim(), always_holiday_overtime:false}]});
     const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
     state.workers.push(w);
-    document.querySelectorAll("#worker-chips, #night-chips, #ot-chips").forEach(chips=>{
+    document.querySelectorAll("#worker-chips, #custom-hours-chips, #night-chips, #ot-chips").forEach(chips=>{
       const span = document.createElement("span");
       span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
       span.onclick = ()=>toggleChip(span);
@@ -789,16 +813,24 @@ window.saveEntryModal = async (siteId) => {
   }
 
   if(rule.type==="fixed" || rule.type==="weekday" || rule.type==="day"){
-    const chips = document.querySelectorAll("#worker-chips .chip.on");
-    if(chips.length===0){ alert("作業員を選択してください"); return; }
+    const attendIds = new Set([...document.querySelectorAll("#worker-chips .chip.on")].map(c=>c.dataset.id));
     const nightOn = document.getElementById("nightToggle") ? document.getElementById("nightToggle").checked : false;
     const otOn = document.getElementById("otToggle") ? document.getElementById("otToggle").checked : false;
     const otVal = document.getElementById("overtimeInput") ? parseFloat(document.getElementById("overtimeInput").value)||0 : 0;
+    const customOn = document.getElementById("customHoursToggle") ? document.getElementById("customHoursToggle").checked : false;
+    const customVal = document.getElementById("customHoursInput") ? parseFloat(document.getElementById("customHoursInput").value)||0 : 0;
     const nightIds = nightOn ? new Set([...document.querySelectorAll("#night-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
     const otIds = otOn ? new Set([...document.querySelectorAll("#ot-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
-    chips.forEach(c=>{
-      const wid = c.dataset.id;
-      const hours = (rule.type==="day") ? null : hoursForWorker(rule, wid, d.getDay());
+    const customIds = customOn ? new Set([...document.querySelectorAll("#custom-hours-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
+    // 出勤・夜間・残業のどれかにタップされていれば対象（残業だけタップ＝出勤扱いにせず残業のみ記録）
+    const allIds = new Set([...attendIds, ...nightIds, ...otIds]);
+    if(allIds.size===0){ alert("作業員を選択してください"); return; }
+    allIds.forEach(wid=>{
+      const isAttend = attendIds.has(wid);
+      let hours = null;
+      if(isAttend && rule.type!=="day"){
+        hours = customIds.has(wid) ? customVal : hoursForWorker(rule, wid, d.getDay());
+      }
       const isNight = nightIds.has(wid);
       const isOt = otIds.has(wid);
       pushEntry(wid, hours, {night: isNight, overtime: isOt ? otVal : 0});

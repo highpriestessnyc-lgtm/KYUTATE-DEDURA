@@ -350,7 +350,7 @@ async function loadEntriesForMonth(monthKey){
     state.entries[monthKey] = all.map(r=>({
       id:r.id, date:r.date, siteId:r.site_id, workerId:r.worker_id, workerName:r.worker_name,
       hours: r.hours!=null ? Number(r.hours) : null, night: r.night, overtime: Number(r.overtime||0),
-      holidayOvertime: r.holiday_overtime, role: r.role, band: r.band
+      holidayOvertime: r.holiday_overtime, role: r.role, band: r.band, doubleDay: !!r.double_day
     }));
   }catch(e){
     reportError("出勤データの読み込み", e);
@@ -458,7 +458,7 @@ function renderEntry(){
           ${e.hours!=null?`<span class="detail">・${e.hours}H</span>`:''}
           ${e.night?`<span class="tag night">夜間</span>`:''}
           ${e.overtime?`<span class="tag ot">残業${e.overtime}H</span>`:''}
-          ${e.holidayOvertime?`<span class="tag holiday">休日残業</span>`:''}
+          ${e.holidayOvertime?`<span class="tag holiday">休日残業</span>`:''}${e.doubleDay?`<span class="tag holiday">2日分</span>`:''}
         </div>
         <div class="row" style="gap:4px;">
           <button type="button" class="chip" style="padding:5px 10px; font-size:12px;" onclick="openEntryEdit('${e.id}')">残業</button>
@@ -712,7 +712,7 @@ window.saveOvertimeOnly = async (siteId) => {
     const mapped = inserted.map(r=>({
       id:r.id, date:r.date, siteId:r.site_id, workerId:r.worker_id, workerName:r.worker_name,
       hours: r.hours!=null?Number(r.hours):null, night:r.night, overtime:Number(r.overtime||0),
-      holidayOvertime:r.holiday_overtime, role:r.role, band:r.band
+      holidayOvertime:r.holiday_overtime, role:r.role, band:r.band, doubleDay: !!r.double_day
     }));
     state.entries[monthKey] = (state.entries[monthKey]||[]).concat(mapped);
     closeModal();
@@ -818,6 +818,7 @@ window.openEntryModal = (siteId) => {
         <div class="radio-grid" id="hc-mode">
           <div class="radio-opt" data-mode="solo" onclick="selectHcMode(this)">1名（本務+残業）</div>
           <div class="radio-opt" data-mode="pair" onclick="selectHcMode(this)">2名（早番/遅番）</div>
+          <div class="radio-opt" data-mode="double" onclick="selectHcMode(this)">2日分（昼＋夜通し）</div>
         </div>
       </div>
       <div id="hc-body"></div>
@@ -907,6 +908,14 @@ window.selectHcMode = (el) => {
         <select class="plain" id="hc-solo-select" style="width:100%">${workerOptions}</select>
       </div>
     `;
+  } else if(mode==="double"){
+    body.innerHTML = `
+      <div class="field">
+        <label>担当者</label>
+        <select class="plain" id="hc-double-select" style="width:100%">${workerOptions}</select>
+      </div>
+      <div class="footer-note" style="margin:0;">昼も夜もこの現場に入った扱いで、出勤日数が2日分カウントされます（時間・残業も2日分で計算されます）。</div>
+    `;
   } else {
     const rule = site.rule;
     const otOptions = Array.from({length:25}, (_,i)=>i*0.5).map(v=>`<option value="${v}" ${v===rule.pair.each?'selected':''}>${v}H</option>`).join("");
@@ -967,7 +976,8 @@ window.saveEntryModal = async (siteId) => {
     newRows.push({
       date: dateKey, site_id: siteId, worker_id: workerId, worker_name: w.name,
       hours: hours, night: !!extra.night, overtime: extra.overtime||0,
-      holiday_overtime: holidayOvertime, role: extra.role||null, band: extra.band||null
+      holiday_overtime: holidayOvertime, role: extra.role||null, band: extra.band||null,
+      double_day: !!extra.doubleDay
     });
   }
 
@@ -1008,11 +1018,15 @@ window.saveEntryModal = async (siteId) => {
     if(!any){ alert("作業員を選択してください"); return; }
   } else if(rule.type==="headcount"){
     const mode = window._modalState.hcMode;
-    if(!mode){ alert("1名／2名を選択してください"); return; }
+    if(!mode){ alert("1名／2名／2日分を選択してください"); return; }
     if(mode==="solo"){
       const wid = document.getElementById("hc-solo-select").value;
       const ot = sunHol ? (rule.solo.overtimeHoliday!=null?rule.solo.overtimeHoliday:rule.solo.overtime) : rule.solo.overtime;
       pushEntry(wid, rule.solo.hours, {overtime: ot, role:"単独"});
+    } else if(mode==="double"){
+      const wid = document.getElementById("hc-double-select").value;
+      const ot = sunHol ? (rule.solo.overtimeHoliday!=null?rule.solo.overtimeHoliday:rule.solo.overtime) : rule.solo.overtime;
+      pushEntry(wid, rule.solo.hours*2, {overtime: ot*2, role:"2日分（昼＋夜）", doubleDay:true});
     } else {
       const a = document.getElementById("hc-pair-a").value;
       const b = document.getElementById("hc-pair-b").value;
@@ -1033,7 +1047,7 @@ window.saveEntryModal = async (siteId) => {
     const mapped = inserted.map(r=>({
       id:r.id, date:r.date, siteId:r.site_id, workerId:r.worker_id, workerName:r.worker_name,
       hours: r.hours!=null?Number(r.hours):null, night:r.night, overtime:Number(r.overtime||0),
-      holidayOvertime:r.holiday_overtime, role:r.role, band:r.band
+      holidayOvertime:r.holiday_overtime, role:r.role, band:r.band, doubleDay: !!r.double_day
     }));
     state.entries[monthKey] = (state.entries[monthKey]||[]).concat(mapped);
     closeModal();
@@ -1122,14 +1136,15 @@ async function renderReport(){
   const perWorker = {};
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {id:key, name:e.workerName, days:new Set(), hours:0, night:0, overtime:0, holidayOt:0};
+    if(!perWorker[key]) perWorker[key] = {id:key, name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayOt:0};
     perWorker[key].days.add(e.date);
+    if(e.doubleDay) perWorker[key].extraDays += 1;
     perWorker[key].hours += (e.hours||0);
     if(e.night) perWorker[key].night += 1;
     perWorker[key].overtime += (e.overtime||0);
     if(e.holidayOvertime) perWorker[key].holidayOt += (e.hours||0)+(e.overtime||0);
   });
-  const workerRows = Object.values(perWorker).sort((a,b)=>b.days.size - a.days.size);
+  const workerRows = Object.values(perWorker).sort((a,b)=>(b.days.size+b.extraDays) - (a.days.size+a.extraDays));
 
   // 現場別集計
   const perSite = {};
@@ -1150,6 +1165,10 @@ async function renderReport(){
       <button onclick="shiftMonth(1)">›</button>
     </div>
     <div class="card">
+      <button class="btn primary" style="width:100%;" onclick="addRecordForReportMonth()">＋ この月（${label}）に記録を追加・修正する</button>
+      <div class="footer-note" style="margin:8px 0 0;">抜けていた出勤や、後から気づいた残業をこの月の中の好きな日で追加できます</div>
+    </div>
+    <div class="card">
       <div class="row" style="gap:8px;">
         <button class="btn ghost" style="flex:1;" onclick="exportEntriesCSV()">📄 明細をCSVで出す</button>
         <button class="btn ghost" style="flex:1;" onclick="exportWorkerSummaryCSV()">📄 作業員集計をCSVで出す</button>
@@ -1164,30 +1183,30 @@ async function renderReport(){
     <div class="card">
       <div class="section-title">作業員別 集計（タップで内訳）</div>
       <table class="report">
-        <tr><th>氏名</th><th>出勤日数</th><th>合計時間</th><th>夜間回数</th><th>残業計</th>${wage?'<th>概算給与</th>':''}</tr>
+        <tr><th>氏名</th><th>出勤日数</th><th>合計時間</th><th>夜間回数</th><th>残業計</th>${wage?'<th>概算給与(通常分)</th>':''}</tr>
         ${workerRows.map(r=>`
           <tr onclick="openWorkerDetail('${r.id}')" style="cursor:pointer;">
             <td>${r.name}</td>
-            <td class="summary-total">${r.days.size}日</td>
+            <td class="summary-total">${r.days.size + r.extraDays}日</td>
             <td>${r.hours.toFixed(1)}H</td>
             <td>${r.night}回</td>
             <td>${r.overtime.toFixed(1)}H</td>
-            ${wage?`<td class="summary-total">¥${Math.round((r.hours+r.overtime)*wage).toLocaleString()}</td>`:''}
+            ${wage?`<td class="summary-total">¥${Math.round(r.hours*wage).toLocaleString()}</td>`:''}
           </tr>`).join("") || `<tr><td colspan="${wage?6:5}" class="empty">まだ入力がありません</td></tr>`}
       </table>
     </div>
     <div class="card">
       <div class="section-title">現場別 集計</div>
       <table class="report">
-        <tr><th>現場</th><th>延べ日数</th><th>合計時間</th>${wage?'<th>概算経費</th>':''}</tr>
+        <tr><th>現場</th><th>延べ日数</th><th>合計時間</th>${wage?'<th>概算経費(通常分)</th>':''}</tr>
         ${siteRows.map(r=>`
-          <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td>${wage?`<td>¥${Math.round((r.hours+r.overtime)*wage).toLocaleString()}</td>`:''}</tr>
+          <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td>${wage?`<td>¥${Math.round(r.hours*wage).toLocaleString()}</td>`:''}</tr>
         `).join("") || `<tr><td colspan="${wage?4:3}" class="empty">まだ入力がありません</td></tr>`}
       </table>
-      ${wage ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line); font-weight:700; color:var(--accent);">現場合計 概算経費：¥${Math.round(siteRows.reduce((sum,r)=>sum+(r.hours+r.overtime)*wage,0)).toLocaleString()}</div>` : ''}
+      ${wage ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line); font-weight:700; color:var(--accent);">現場合計 概算経費（通常時間のみ）：¥${Math.round(siteRows.reduce((sum,r)=>sum+r.hours*wage,0)).toLocaleString()}</div>` : ''}
     </div>
     <div class="footer-note">
-      「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。概算経費は 時給 ×（合計時間＋残業時間）の簡易計算です。
+      「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。概算給与・概算経費は 時給 × 通常時間 のみで計算しています（残業代は人によって単価が違うため含んでいません。残業計の時間を見て、それぞれの単価で別途計算してください）。
     </div>
   `;
   mainEl.innerHTML = html;
@@ -1207,20 +1226,23 @@ window.openWorkerDetail = (workerId) => {
 
   // 時間枠ごとの日数内訳（日額など hours が null のものは「日額」扱い）
   const bucket = {};
-  let totalHours = 0, totalOvertime = 0, nightCount = 0;
+  let totalHours = 0, totalOvertime = 0, nightCount = 0, extraDays = 0;
+  const uniqueDates = new Set();
   entries.forEach(e=>{
     const key = e.hours!=null ? `${e.hours}H` : "日額";
     bucket[key] = (bucket[key]||0) + 1;
     totalHours += (e.hours||0);
     totalOvertime += (e.overtime||0);
     if(e.night) nightCount++;
+    if(e.doubleDay) extraDays += 1;
+    uniqueDates.add(e.date);
   });
   const bucketKeys = Object.keys(bucket).sort((a,b)=>{
     if(a==="日額") return 1;
     if(b==="日額") return -1;
     return parseFloat(b)-parseFloat(a);
   });
-  const estimatedPay = (totalHours + totalOvertime) * wage;
+  const estimatedPay = totalHours * wage;
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
@@ -1232,9 +1254,9 @@ window.openWorkerDetail = (workerId) => {
             ${bucketKeys.map(k=>`<div><span class="summary-total">${bucket[k]}</span>日 <span style="color:var(--sub); font-size:12px;">（${k}）</span></div>`).join("")}
           </div>
           <div style="margin-top:10px; border-top:1px solid var(--line); padding-top:10px;">
-            <div>合計出勤日数：<b>${entries.length}日</b></div>
+            <div>合計出勤日数：<b>${uniqueDates.size + extraDays}日</b>${extraDays?`<span style="color:var(--sub); font-size:12px;">（2日分×${extraDays}件含む）</span>`:''}</div>
             <div>合計時間：<b>${totalHours.toFixed(1)}H</b>　残業計：<b>${totalOvertime.toFixed(1)}H</b>　夜間：<b>${nightCount}回</b></div>
-            ${wage ? `<div style="margin-top:6px; color:var(--accent); font-weight:700;">概算給与：¥${Math.round(estimatedPay).toLocaleString()}</div>` : ''}
+            ${wage ? `<div style="margin-top:6px; color:var(--accent); font-weight:700;">概算給与（通常分のみ）：¥${Math.round(estimatedPay).toLocaleString()}</div><div style="font-size:12px; color:var(--sub);">残業代は単価が人によって違うため含んでいません。残業計 ${totalOvertime.toFixed(1)}H を別途計算してください。</div>` : ''}
           </div>
         </div>
         <div class="section-title" style="font-size:14px;">明細</div>
@@ -1247,7 +1269,7 @@ window.openWorkerDetail = (workerId) => {
               ${e.hours!=null?`<span class="detail">・${e.hours}H</span>`:''}
               ${e.night?`<span class="tag night">夜間</span>`:''}
               ${e.overtime?`<span class="tag ot">残業${e.overtime}H</span>`:''}
-              ${e.holidayOvertime?`<span class="tag holiday">休日残業</span>`:''}
+              ${e.holidayOvertime?`<span class="tag holiday">休日残業</span>`:''}${e.doubleDay?`<span class="tag holiday">2日分</span>`:''}
             </div>
             <button type="button" class="chip" style="padding:5px 10px; font-size:12px;" onclick="openEntryEdit('${e.id}')">残業</button>
           </div>`;
@@ -1290,17 +1312,28 @@ window.exportWorkerSummaryCSV = () => {
   const perWorker = {};
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), hours:0, night:0, overtime:0};
+    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0};
     perWorker[key].days.add(e.date);
+    if(e.doubleDay) perWorker[key].extraDays += 1;
     perWorker[key].hours += (e.hours||0);
     if(e.night) perWorker[key].night += 1;
     perWorker[key].overtime += (e.overtime||0);
   });
-  const rows = [["氏名","出勤日数","合計時間(H)","夜間回数","残業計(H)","概算給与(円)"]];
-  Object.values(perWorker).sort((a,b)=>b.days.size-a.days.size).forEach(r=>{
-    rows.push([r.name, r.days.size, r.hours.toFixed(1), r.night, r.overtime.toFixed(1), wage?Math.round((r.hours+r.overtime)*wage):""]);
+  const rows = [["氏名","出勤日数","合計時間(H)","夜間回数","残業計(H)","概算給与(通常分のみ・円)"]];
+  Object.values(perWorker).sort((a,b)=>(b.days.size+b.extraDays)-(a.days.size+a.extraDays)).forEach(r=>{
+    rows.push([r.name, r.days.size+r.extraDays, r.hours.toFixed(1), r.night, r.overtime.toFixed(1), wage?Math.round(r.hours*wage):""]);
   });
   downloadCSV(`作業員集計_${monthKey}.csv`, rows);
+};
+window.addRecordForReportMonth = async () => {
+  const [y,m] = state.reportMonth.split("-").map(Number);
+  const d = new Date(y, m-1, Math.min(state.currentDate.getDate(), new Date(y,m,0).getDate()));
+  state.currentDate = d;
+  await loadEntriesForMonth(ym(d));
+  state.tab = "entry";
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active", b.dataset.tab==="entry"));
+  render();
+  openCalendarPicker();
 };
 window.shiftMonth = async (delta) => {
   const [y,m] = state.reportMonth.split("-").map(Number);

@@ -294,6 +294,7 @@ let state = {
   sites: [],
   workers: [],
   entries: {}, // key: yyyy-mm -> array
+  adjustments: {}, // key: yyyy-mm -> array
   manualHoliday: {}, // key: yyyy-mm-dd -> true/false override
   siteSearch: "",
   quickMode: false,
@@ -355,6 +356,18 @@ async function loadEntriesForMonth(monthKey){
   }catch(e){
     reportError("出勤データの読み込み", e);
     state.entries[monthKey] = state.entries[monthKey] || [];
+  }
+}
+async function loadAdjustmentsForMonth(monthKey){
+  try{
+    const rows = await sb(`demen_adjustments?select=*&month=eq.${monthKey}&order=created_at.asc`);
+    state.adjustments[monthKey] = rows.map(r=>({
+      id:r.id, siteId:r.site_id, workerId:r.worker_id, workerName:r.worker_name,
+      daysDelta: Number(r.days_delta||0), overtimeDelta: Number(r.overtime_delta||0), note: r.note
+    }));
+  }catch(e){
+    reportError("調整データの読み込み", e);
+    state.adjustments[monthKey] = state.adjustments[monthKey] || [];
   }
 }
 async function saveSetting(key, value){
@@ -1136,7 +1149,9 @@ window.saveEntryEdit = async (entryId) => {
 async function renderReport(){
   const monthKey = state.reportMonth;
   await loadEntriesForMonth(monthKey);
+  await loadAdjustmentsForMonth(monthKey);
   const entries = state.entries[monthKey]||[];
+  const adjustments = state.adjustments[monthKey]||[];
 
   const [y,m] = monthKey.split("-").map(Number);
   const label = `${y}年${m}月`;
@@ -1146,7 +1161,7 @@ async function renderReport(){
   const perWorker = {};
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {id:key, name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayOt:0, minSort:Infinity};
+    if(!perWorker[key]) perWorker[key] = {id:key, name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayOt:0, minSort:Infinity, adjDays:0, adjOt:0};
     perWorker[key].days.add(e.date);
     if(e.doubleDay) perWorker[key].extraDays += 1;
     perWorker[key].hours += (e.hours||0);
@@ -1155,6 +1170,12 @@ async function renderReport(){
     if(e.holidayOvertime) perWorker[key].holidayOt += (e.hours||0)+(e.overtime||0);
     const site = state.sites.find(s=>s.id===e.siteId);
     if(site && site.sortOrder!=null && site.sortOrder < perWorker[key].minSort) perWorker[key].minSort = site.sortOrder;
+  });
+  adjustments.forEach(a=>{
+    const key = a.workerId;
+    if(!perWorker[key]) perWorker[key] = {id:key, name:a.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayOt:0, minSort:Infinity, adjDays:0, adjOt:0};
+    perWorker[key].adjDays += a.daysDelta;
+    perWorker[key].adjOt += a.overtimeDelta;
   });
   const workerRows = Object.values(perWorker).sort((a,b)=> a.minSort - b.minSort || ((b.days.size+b.extraDays) - (a.days.size+a.extraDays)));
 
@@ -1177,8 +1198,12 @@ async function renderReport(){
       <button onclick="shiftMonth(1)">›</button>
     </div>
     <div class="card">
-      <button class="btn primary" style="width:100%;" onclick="addRecordForReportMonth()">＋ この月（${label}）に記録を追加・修正する</button>
-      <div class="footer-note" style="margin:8px 0 0;">抜けていた出勤や、後から気づいた残業をこの月の中の好きな日で追加できます</div>
+      <button class="btn primary" style="width:100%;" onclick="openAdjustmentModal()">±月次の調整（日数・残業）</button>
+      <div class="footer-note" style="margin:8px 0 0;">「8月2日は出勤になってたけど実は休みだった」のようなケースを、その日を探さずに人ごとの合計から直接 ±日数・±残業時間 で調整できます。</div>
+    </div>
+    <div class="card">
+      <button class="btn primary" style="width:100%;" onclick="addRecordForReportMonth()">＋／－ この月（${label}）の記録を直す</button>
+      <div class="footer-note" style="margin:8px 0 0;">日付を選ぶと、その日の一覧が出ます。休みなのに出勤になっていた人は✕で削除、抜けていた出勤や残業はそこから追加できます。</div>
     </div>
     <div class="card">
       <button class="btn primary" style="width:100%;" onclick="openOvertimeSheet()">⚡ 残業まとめ入力（作業員ごと）</button>
@@ -1202,11 +1227,11 @@ async function renderReport(){
         <tr><th>氏名</th><th>出勤日数</th><th>合計時間</th><th>夜間回数</th><th>残業計</th>${wage?'<th>概算給与(通常分)</th>':''}</tr>
         ${workerRows.map(r=>`
           <tr onclick="openWorkerDetail('${r.id}')" style="cursor:pointer;">
-            <td>${r.name}</td>
-            <td class="summary-total">${r.days.size + r.extraDays}日</td>
+            <td>${r.name}${(r.adjDays||r.adjOt)?' <span class="tag holiday" style="font-size:10px;">調整あり</span>':''}</td>
+            <td class="summary-total">${r.days.size + r.extraDays + r.adjDays}日</td>
             <td>${r.hours.toFixed(1)}H</td>
             <td>${r.night}回</td>
-            <td>${r.overtime.toFixed(1)}H</td>
+            <td>${(r.overtime + r.adjOt).toFixed(1)}H</td>
             ${wage?`<td class="summary-total">¥${Math.round(r.hours*wage).toLocaleString()}</td>`:''}
           </tr>`).join("") || `<tr><td colspan="${wage?6:5}" class="empty">まだ入力がありません</td></tr>`}
       </table>
@@ -1236,8 +1261,9 @@ window.setWageRate = async (val) => {
 window.openWorkerDetail = (workerId) => {
   const monthKey = state.reportMonth;
   const entries = (state.entries[monthKey]||[]).filter(e=>e.workerId===workerId).sort((a,b)=>a.date.localeCompare(b.date));
-  if(entries.length===0) return;
-  const name = entries[0].workerName;
+  const workerAdjustments = (state.adjustments[monthKey]||[]).filter(a=>a.workerId===workerId);
+  if(entries.length===0 && workerAdjustments.length===0) return;
+  const name = entries[0] ? entries[0].workerName : workerAdjustments[0].workerName;
   const wage = state.wageRate || 0;
 
   // 時間枠ごとの日数内訳（日額など hours が null のものは「日額」扱い）
@@ -1253,6 +1279,9 @@ window.openWorkerDetail = (workerId) => {
     if(e.doubleDay) extraDays += 1;
     uniqueDates.add(e.date);
   });
+  const adjDays = workerAdjustments.reduce((s,a)=>s+a.daysDelta, 0);
+  const adjOt = workerAdjustments.reduce((s,a)=>s+a.overtimeDelta, 0);
+  totalOvertime += adjOt;
   const bucketKeys = Object.keys(bucket).sort((a,b)=>{
     if(a==="日額") return 1;
     if(b==="日額") return -1;
@@ -1270,11 +1299,21 @@ window.openWorkerDetail = (workerId) => {
             ${bucketKeys.map(k=>`<div><span class="summary-total">${bucket[k]}</span>日 <span style="color:var(--sub); font-size:12px;">（${k}）</span></div>`).join("")}
           </div>
           <div style="margin-top:10px; border-top:1px solid var(--line); padding-top:10px;">
-            <div>合計出勤日数：<b>${uniqueDates.size + extraDays}日</b>${extraDays?`<span style="color:var(--sub); font-size:12px;">（2日分×${extraDays}件含む）</span>`:''}</div>
-            <div>合計時間：<b>${totalHours.toFixed(1)}H</b>　残業計：<b>${totalOvertime.toFixed(1)}H</b>　夜間：<b>${nightCount}回</b></div>
+            <div>合計出勤日数：<b>${uniqueDates.size + extraDays + adjDays}日</b>${extraDays?`<span style="color:var(--sub); font-size:12px;">（2日分×${extraDays}件含む）</span>`:''}${adjDays?`<span style="color:var(--accent); font-size:12px;">（調整${adjDays>0?'+':''}${adjDays}含む）</span>`:''}</div>
+            <div>合計時間：<b>${totalHours.toFixed(1)}H</b>　残業計：<b>${totalOvertime.toFixed(1)}H</b>${adjOt?`<span style="color:var(--accent); font-size:12px;">（調整${adjOt>0?'+':''}${adjOt}含む）</span>`:''}　夜間：<b>${nightCount}回</b></div>
             ${wage ? `<div style="margin-top:6px; color:var(--accent); font-weight:700;">概算給与（通常分のみ）：¥${Math.round(estimatedPay).toLocaleString()}</div><div style="font-size:12px; color:var(--sub);">残業代は単価が人によって違うため含んでいません。残業計 ${totalOvertime.toFixed(1)}H を別途計算してください。</div>` : ''}
           </div>
         </div>
+        ${workerAdjustments.length>0 ? `
+        <div class="section-title" style="font-size:14px;">調整</div>
+        ${workerAdjustments.map(a=>`<div class="entry-row">
+          <div>
+            <span class="detail">${a.daysDelta?`日数${a.daysDelta>0?'+':''}${a.daysDelta}`:''}${a.overtimeDelta?`　残業${a.overtimeDelta>0?'+':''}${a.overtimeDelta}H`:''}</span>
+            ${a.note?`<div class="detail">${a.note}</div>`:''}
+          </div>
+          <div class="remove-x" onclick="deleteAdjustment('${a.id}'); closeModal();">✕</div>
+        </div>`).join("")}
+        ` : ''}
         <div class="section-title" style="font-size:14px;">明細</div>
         ${entries.map(e=>{
           const site = state.sites.find(s=>s.id===e.siteId);
@@ -1324,11 +1363,12 @@ window.exportEntriesCSV = () => {
 window.exportWorkerSummaryCSV = () => {
   const monthKey = state.reportMonth;
   const entries = state.entries[monthKey]||[];
+  const adjustments = state.adjustments[monthKey]||[];
   const wage = state.wageRate || 0;
   const perWorker = {};
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity};
+    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity, adjDays:0, adjOt:0};
     perWorker[key].days.add(e.date);
     if(e.doubleDay) perWorker[key].extraDays += 1;
     perWorker[key].hours += (e.hours||0);
@@ -1337,11 +1377,115 @@ window.exportWorkerSummaryCSV = () => {
     const site = state.sites.find(s=>s.id===e.siteId);
     if(site && site.sortOrder!=null && site.sortOrder < perWorker[key].minSort) perWorker[key].minSort = site.sortOrder;
   });
+  adjustments.forEach(a=>{
+    const key = a.workerId;
+    if(!perWorker[key]) perWorker[key] = {name:a.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity, adjDays:0, adjOt:0};
+    perWorker[key].adjDays += a.daysDelta;
+    perWorker[key].adjOt += a.overtimeDelta;
+  });
   const rows = [["氏名","出勤日数","合計時間(H)","夜間回数","残業計(H)","概算給与(通常分のみ・円)"]];
   Object.values(perWorker).sort((a,b)=> a.minSort - b.minSort || ((b.days.size+b.extraDays)-(a.days.size+a.extraDays))).forEach(r=>{
-    rows.push([r.name, r.days.size+r.extraDays, r.hours.toFixed(1), r.night, r.overtime.toFixed(1), wage?Math.round(r.hours*wage):""]);
+    rows.push([r.name, r.days.size+r.extraDays+r.adjDays, r.hours.toFixed(1), r.night, (r.overtime+r.adjOt).toFixed(1), wage?Math.round(r.hours*wage):""]);
   });
   downloadCSV(`作業員集計_${monthKey}.csv`, rows);
+};
+window.openAdjustmentModal = async () => {
+  await loadAdjustmentsForMonth(state.reportMonth);
+  const siteOptions = state.sites.map(s=>`<option value="${s.id}">${s.category} ／ ${s.name}</option>`).join("");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>±月次の調整</h3>
+        <div class="modal-sub">${state.reportMonth}</div>
+        <div class="field">
+          <label>現場（担当者の絞り込み用）</label>
+          <select class="plain" id="adjSite" style="width:100%" onchange="populateAdjustmentWorkers()">${siteOptions}</select>
+        </div>
+        <div class="field">
+          <label>作業員</label>
+          <select class="plain" id="adjWorker" style="width:100%"></select>
+        </div>
+        <div class="row" style="gap:8px;">
+          <div class="field" style="flex:1;">
+            <label>日数調整</label>
+            <input type="number" step="1" id="adjDays" value="0" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+          </div>
+          <div class="field" style="flex:1;">
+            <label>残業調整（H）</label>
+            <input type="number" step="0.5" id="adjOt" value="0" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+          </div>
+        </div>
+        <div class="field">
+          <label>メモ（任意）</label>
+          <input type="text" id="adjNote" placeholder="例：8/2 休みだったのに出勤扱いになってた" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text);">
+        </div>
+        <div class="footer-note" style="margin:0 0 10px;">マイナスの数字で減らせます（例：日数に -1、残業に -3.5）。</div>
+        <button class="btn primary" style="width:100%; margin-bottom:14px;" onclick="saveAdjustment()">この調整を追加する</button>
+        <div class="section-title" style="font-size:14px;">この月の調整一覧</div>
+        <div id="adjList"></div>
+        <div class="btnbar">
+          <button class="btn ghost" onclick="closeModal()">閉じる</button>
+        </div>
+      </div>
+    </div>
+  `;
+  populateAdjustmentWorkers();
+  renderAdjustmentList();
+};
+window.populateAdjustmentWorkers = () => {
+  const siteId = document.getElementById("adjSite").value;
+  const site = state.sites.find(s=>s.id===siteId);
+  const workers = site ? workersForSite(site) : state.workers;
+  document.getElementById("adjWorker").innerHTML = workers.map(w=>`<option value="${w.id}">${w.name}</option>`).join("");
+};
+window.renderAdjustmentList = () => {
+  const list = state.adjustments[state.reportMonth]||[];
+  const el = document.getElementById("adjList");
+  if(!el) return;
+  if(list.length===0){ el.innerHTML = `<div class="empty">まだありません</div>`; return; }
+  el.innerHTML = list.map(a=>`
+    <div class="entry-row">
+      <div>
+        <span class="who">${a.workerName}</span>
+        <span class="detail">${a.daysDelta?`日数${a.daysDelta>0?'+':''}${a.daysDelta}`:''}${a.overtimeDelta?`　残業${a.overtimeDelta>0?'+':''}${a.overtimeDelta}H`:''}</span>
+        ${a.note?`<div class="detail" style="margin-top:2px;">${a.note}</div>`:''}
+      </div>
+      <div class="remove-x" onclick="deleteAdjustment('${a.id}')">✕</div>
+    </div>
+  `).join("");
+};
+window.saveAdjustment = async () => {
+  const siteId = document.getElementById("adjSite").value;
+  const workerId = document.getElementById("adjWorker").value;
+  const w = state.workers.find(x=>x.id===workerId);
+  if(!w) return;
+  const daysDelta = parseFloat(document.getElementById("adjDays").value)||0;
+  const overtimeDelta = parseFloat(document.getElementById("adjOt").value)||0;
+  const note = document.getElementById("adjNote").value.trim();
+  if(daysDelta===0 && overtimeDelta===0){ alert("日数か残業のどちらかに数字を入れてください"); return; }
+  try{
+    const [row] = await sb("demen_adjustments", {method:"POST", body:[{
+      month: state.reportMonth, site_id: siteId, worker_id: workerId, worker_name: w.name,
+      days_delta: daysDelta, overtime_delta: overtimeDelta, note: note||null
+    }]});
+    state.adjustments[state.reportMonth] = (state.adjustments[state.reportMonth]||[]).concat([{
+      id:row.id, siteId:row.site_id, workerId:row.worker_id, workerName:row.worker_name,
+      daysDelta:Number(row.days_delta||0), overtimeDelta:Number(row.overtime_delta||0), note:row.note
+    }]);
+    document.getElementById("adjDays").value = "0";
+    document.getElementById("adjOt").value = "0";
+    document.getElementById("adjNote").value = "";
+    renderAdjustmentList();
+    render();
+  }catch(e){ reportError("調整の保存", e); }
+};
+window.deleteAdjustment = async (id) => {
+  try{
+    await sb(`demen_adjustments?id=eq.${id}`, {method:"DELETE", prefer:"return=minimal"});
+    state.adjustments[state.reportMonth] = (state.adjustments[state.reportMonth]||[]).filter(a=>a.id!==id);
+    renderAdjustmentList();
+    render();
+  }catch(e){ reportError("調整の削除", e); }
 };
 window.addRecordForReportMonth = async () => {
   const [y,m] = state.reportMonth.split("-").map(Number);

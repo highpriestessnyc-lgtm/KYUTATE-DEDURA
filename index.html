@@ -793,6 +793,20 @@ window.openEntryModal = (siteId) => {
           ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
         </div>
       </div>
+      <div class="toggle-row">
+        <span>昼も夜も入った人がいる（2日分）</span>
+        <label class="switch"><input type="checkbox" id="doubleDayToggle" onchange="onDoubleDayToggle()"><span class="slider"></span></label>
+      </div>
+      <div class="field" id="doubleDayField" style="display:none;">
+        <div class="footer-note" style="margin:0 0 6px;">昼・夜の両方この現場に入った人だけタップしてください。出勤日数が2日分カウントされます。</div>
+        <div class="row between" style="margin-bottom:6px;">
+          <label style="margin:0;">2日分の人だけタップ</label>
+          <button type="button" class="link-btn" onclick="toggleAllChips('double-day-chips')">全員選択/解除</button>
+        </div>
+        <div class="worker-list" id="double-day-chips">
+          ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
+        </div>
+      </div>
     `;
   } else if(rule.type==="bands"){
     bodyHtml = `
@@ -818,7 +832,6 @@ window.openEntryModal = (siteId) => {
         <div class="radio-grid" id="hc-mode">
           <div class="radio-opt" data-mode="solo" onclick="selectHcMode(this)">1名（本務+残業）</div>
           <div class="radio-opt" data-mode="pair" onclick="selectHcMode(this)">2名（早番/遅番）</div>
-          <div class="radio-opt" data-mode="double" onclick="selectHcMode(this)">2日分（昼＋夜通し）</div>
         </div>
       </div>
       <div id="hc-body"></div>
@@ -842,7 +855,7 @@ window.openEntryModal = (siteId) => {
 };
 window.showAllWorkers = (siteId) => {
   const containers = [
-    ...document.querySelectorAll("#worker-chips, #custom-hours-chips, #night-chips, #ot-chips, [data-band-chips]")
+    ...document.querySelectorAll("#worker-chips, #custom-hours-chips, #night-chips, #ot-chips, #double-day-chips, [data-band-chips]")
   ];
   if(containers.length===0) return;
   containers.forEach(chips=>{
@@ -877,6 +890,10 @@ window.onCustomHoursToggle = () => {
   const on = document.getElementById("customHoursToggle").checked;
   document.getElementById("customHoursField").style.display = on ? "block":"none";
 };
+window.onDoubleDayToggle = () => {
+  const on = document.getElementById("doubleDayToggle").checked;
+  document.getElementById("doubleDayField").style.display = on ? "block":"none";
+};
 window.addQuickWorkerAllBands = async () => {
   const name = prompt("追加する作業員名");
   if(!name) return;
@@ -908,14 +925,6 @@ window.selectHcMode = (el) => {
         <select class="plain" id="hc-solo-select" style="width:100%">${workerOptions}</select>
       </div>
     `;
-  } else if(mode==="double"){
-    body.innerHTML = `
-      <div class="field">
-        <label>担当者</label>
-        <select class="plain" id="hc-double-select" style="width:100%">${workerOptions}</select>
-      </div>
-      <div class="footer-note" style="margin:0;">昼も夜もこの現場に入った扱いで、出勤日数が2日分カウントされます（時間・残業も2日分で計算されます）。</div>
-    `;
   } else {
     const rule = site.rule;
     const otOptions = Array.from({length:25}, (_,i)=>i*0.5).map(v=>`<option value="${v}" ${v===rule.pair.each?'selected':''}>${v}H</option>`).join("");
@@ -945,7 +954,7 @@ window.addQuickWorker = async () => {
     const [row] = await sb("demen_workers", {method:"POST", body:[{name:name.trim(), always_holiday_overtime:false}]});
     const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
     state.workers.push(w);
-    document.querySelectorAll("#worker-chips, #custom-hours-chips, #night-chips, #ot-chips").forEach(chips=>{
+    document.querySelectorAll("#worker-chips, #custom-hours-chips, #night-chips, #ot-chips, #double-day-chips").forEach(chips=>{
       const span = document.createElement("span");
       span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
       span.onclick = ()=>toggleChip(span);
@@ -988,21 +997,26 @@ window.saveEntryModal = async (siteId) => {
     const otVal = document.getElementById("overtimeInput") ? parseFloat(document.getElementById("overtimeInput").value)||0 : 0;
     const customOn = document.getElementById("customHoursToggle") ? document.getElementById("customHoursToggle").checked : false;
     const customVal = document.getElementById("customHoursInput") ? parseFloat(document.getElementById("customHoursInput").value)||0 : 0;
+    const doubleOn = document.getElementById("doubleDayToggle") ? document.getElementById("doubleDayToggle").checked : false;
     const nightIds = nightOn ? new Set([...document.querySelectorAll("#night-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
     const otIds = otOn ? new Set([...document.querySelectorAll("#ot-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
     const customIds = customOn ? new Set([...document.querySelectorAll("#custom-hours-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
-    // 出勤・夜間・残業のどれかにタップされていれば対象（残業だけタップ＝出勤扱いにせず残業のみ記録）
-    const allIds = new Set([...attendIds, ...nightIds, ...otIds]);
+    const doubleIds = doubleOn ? new Set([...document.querySelectorAll("#double-day-chips .chip.on")].map(c=>c.dataset.id)) : new Set();
+    // 出勤・夜間・残業・2日分のどれかにタップされていれば対象（残業だけタップ＝出勤扱いにせず残業のみ記録）
+    const allIds = new Set([...attendIds, ...nightIds, ...otIds, ...doubleIds]);
     if(allIds.size===0){ alert("作業員を選択してください"); return; }
     allIds.forEach(wid=>{
-      const isAttend = attendIds.has(wid);
+      const isDouble = doubleIds.has(wid);
+      const isAttend = attendIds.has(wid) || isDouble;
       let hours = null;
       if(isAttend && rule.type!=="day"){
         hours = customIds.has(wid) ? customVal : hoursForWorker(rule, wid, d.getDay());
+        if(isDouble) hours = hours*2;
       }
       const isNight = nightIds.has(wid);
       const isOt = otIds.has(wid);
-      pushEntry(wid, hours, {night: isNight, overtime: isOt ? otVal : 0});
+      const otHours = isOt ? (isDouble ? otVal*2 : otVal) : 0;
+      pushEntry(wid, hours, {night: isNight, overtime: otHours, doubleDay: isDouble, role: isDouble?"2日分（昼＋夜）":null});
     });
   } else if(rule.type==="bands"){
     let any = false;
@@ -1018,15 +1032,11 @@ window.saveEntryModal = async (siteId) => {
     if(!any){ alert("作業員を選択してください"); return; }
   } else if(rule.type==="headcount"){
     const mode = window._modalState.hcMode;
-    if(!mode){ alert("1名／2名／2日分を選択してください"); return; }
+    if(!mode){ alert("1名／2名を選択してください"); return; }
     if(mode==="solo"){
       const wid = document.getElementById("hc-solo-select").value;
       const ot = sunHol ? (rule.solo.overtimeHoliday!=null?rule.solo.overtimeHoliday:rule.solo.overtime) : rule.solo.overtime;
       pushEntry(wid, rule.solo.hours, {overtime: ot, role:"単独"});
-    } else if(mode==="double"){
-      const wid = document.getElementById("hc-double-select").value;
-      const ot = sunHol ? (rule.solo.overtimeHoliday!=null?rule.solo.overtimeHoliday:rule.solo.overtime) : rule.solo.overtime;
-      pushEntry(wid, rule.solo.hours*2, {overtime: ot*2, role:"2日分（昼＋夜）", doubleDay:true});
     } else {
       const a = document.getElementById("hc-pair-a").value;
       const b = document.getElementById("hc-pair-b").value;

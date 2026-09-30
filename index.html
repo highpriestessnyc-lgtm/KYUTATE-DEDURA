@@ -285,6 +285,16 @@ function reportError(action, e){
   console.error(action, e);
   alert(`${action}に失敗しました。ネットワーク接続を確認してください。\n(${e.message})`);
 }
+async function findOrCreateWorker(rawName){
+  const trimmed = rawName.trim();
+  if(!trimmed) return null;
+  const existing = state.workers.find(w=>w.name===trimmed);
+  if(existing) return existing;
+  const [row] = await sb("demen_workers", {method:"POST", body:[{name:trimmed, always_holiday_overtime:false}]});
+  const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
+  state.workers.push(w);
+  return w;
+}
 
 /* ===================== アプリ状態 ===================== */
 let state = {
@@ -682,10 +692,10 @@ window.addQuickWorkerOtOnly = async () => {
   const name = prompt("追加する作業員名");
   if(!name) return;
   try{
-    const [row] = await sb("demen_workers", {method:"POST", body:[{name:name.trim(), always_holiday_overtime:false}]});
-    const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
-    state.workers.push(w);
+    const w = await findOrCreateWorker(name);
+    if(!w) return;
     const chips = document.getElementById("ot-only-chips");
+    if([...chips.querySelectorAll(".chip")].some(c=>c.dataset.id===w.id)) return;
     const span = document.createElement("span");
     span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
     span.onclick = ()=>toggleChip(span);
@@ -911,10 +921,10 @@ window.addQuickWorkerAllBands = async () => {
   const name = prompt("追加する作業員名");
   if(!name) return;
   try{
-    const [row] = await sb("demen_workers", {method:"POST", body:[{name:name.trim(), always_holiday_overtime:false}]});
-    const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
-    state.workers.push(w);
+    const w = await findOrCreateWorker(name);
+    if(!w) return;
     document.querySelectorAll("[data-band-chips]").forEach(container=>{
+      if([...container.querySelectorAll(".chip")].some(c=>c.dataset.id===w.id)) return;
       const span = document.createElement("span");
       span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
       span.onclick = ()=>toggleChip(span);
@@ -964,10 +974,10 @@ window.addQuickWorker = async () => {
   const name = prompt("追加する作業員名");
   if(!name) return;
   try{
-    const [row] = await sb("demen_workers", {method:"POST", body:[{name:name.trim(), always_holiday_overtime:false}]});
-    const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
-    state.workers.push(w);
+    const w = await findOrCreateWorker(name);
+    if(!w) return;
     document.querySelectorAll("#worker-chips, #custom-hours-chips, #night-chips, #ot-chips, #double-day-chips").forEach(chips=>{
+      if([...chips.querySelectorAll(".chip")].some(c=>c.dataset.id===w.id)) return;
       const span = document.createElement("span");
       span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
       span.onclick = ()=>toggleChip(span);

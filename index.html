@@ -432,11 +432,15 @@ function renderEntry(){
               </span>`).join("")}
             <span class="chip" style="border-style:dashed;" onclick="event.stopPropagation();quickAddToRoster('${s.id}')">＋追加</span>
           </div>
+          <button type="button" class="link-btn" style="margin-top:8px;" onclick="event.stopPropagation();openOvertimeOnlyModal('${s.id}')">🌙 残業だけ登録（出勤扱いにしない）</button>
         </div>`;
       } else {
-        html += `<div class="site-btn ${done?'done':''}" onclick="openEntryModal('${s.id}')">
-          <div class="name">${s.name}</div>
-          <div class="meta">${ruleShortLabel(s.rule)}${done?` ・入力${doneEntries.length}件`:''}</div>
+        html += `<div class="site-btn ${done?'done':''}" style="position:relative;">
+          <div onclick="openEntryModal('${s.id}')">
+            <div class="name">${s.name}</div>
+            <div class="meta">${ruleShortLabel(s.rule)}${done?` ・入力${doneEntries.length}件`:''}</div>
+          </div>
+          <button type="button" class="link-btn" style="margin-top:6px;" onclick="event.stopPropagation();openOvertimeOnlyModal('${s.id}')">🌙 残業だけ登録</button>
         </div>`;
       }
     });
@@ -625,6 +629,97 @@ function workersForSite(site){
   }
   return state.workers;
 }
+window.openOvertimeOnlyModal = (siteId) => {
+  const site = state.sites.find(s=>s.id===siteId);
+  if(!site) return;
+  const siteWorkers = workersForSite(site);
+  const otOptions = Array.from({length:25}, (_,i)=>i*0.5).map(v=>`<option value="${v}" ${v===2?'selected':''}>${v}H</option>`).join("");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>🌙 残業だけ登録</h3>
+        <div class="modal-sub">${site.name}　／　${state.currentDate.getMonth()+1}月${state.currentDate.getDate()}日　／　出勤扱いにはしません</div>
+        <div class="field">
+          <div class="row between" style="margin-bottom:6px;">
+            <label style="margin:0;">対象者（複数選択可）</label>
+            <button type="button" class="link-btn" onclick="toggleAllChips('ot-only-chips')">全員選択/解除</button>
+          </div>
+          <div class="worker-list" id="ot-only-chips">
+            ${siteWorkers.map(w=>`<span class="chip" data-id="${w.id}" onclick="toggleChip(this)">${w.name}</span>`).join("")}
+          </div>
+          <button class="link-btn" onclick="addQuickWorkerOtOnly()">＋ 作業員をその場で追加</button>
+        </div>
+        <div class="field">
+          <label>残業時間（H）</label>
+          <select class="plain" id="otOnlyHours" style="width:100%;">${otOptions}</select>
+        </div>
+        <div class="toggle-row">
+          <span>夜間作業だった</span>
+          <label class="switch"><input type="checkbox" id="otOnlyNight" checked><span class="slider"></span></label>
+        </div>
+        <div class="btnbar">
+          <button class="btn ghost" onclick="closeModal()">キャンセル</button>
+          <button class="btn primary" onclick="saveOvertimeOnly('${siteId}')">保存する</button>
+        </div>
+      </div>
+    </div>
+  `;
+};
+window.addQuickWorkerOtOnly = async () => {
+  const name = prompt("追加する作業員名");
+  if(!name) return;
+  try{
+    const [row] = await sb("demen_workers", {method:"POST", body:[{name:name.trim(), always_holiday_overtime:false}]});
+    const w = {id:row.id, name:row.name, alwaysHolidayOvertime:row.always_holiday_overtime};
+    state.workers.push(w);
+    const chips = document.getElementById("ot-only-chips");
+    const span = document.createElement("span");
+    span.className = "chip"; span.dataset.id = w.id; span.textContent = w.name;
+    span.onclick = ()=>toggleChip(span);
+    chips.appendChild(span);
+  }catch(e){ reportError("作業員の追加", e); }
+};
+window.saveOvertimeOnly = async (siteId) => {
+  const site = state.sites.find(s=>s.id===siteId);
+  if(!site) return;
+  const chosen = [...document.querySelectorAll("#ot-only-chips .chip.on")];
+  if(chosen.length===0){ alert("対象者を選択してください"); return; }
+  const hours = parseFloat(document.getElementById("otOnlyHours").value)||0;
+  const night = document.getElementById("otOnlyNight").checked;
+  const d = state.currentDate;
+  const dateKey = ymd(d);
+  const monthKey = ym(d);
+  const sunHol = isSunOrHoliday(d, state.manualHoliday[dateKey]);
+  const existingKeys = new Set((state.entries[monthKey]||[]).filter(e=>e.date===dateKey && e.siteId===siteId).map(e=>`${e.workerId}|`));
+  const newRows = [];
+  let skipped = 0;
+  chosen.forEach(c=>{
+    const wid = c.dataset.id;
+    const key = `${wid}|`;
+    if(existingKeys.has(key)){ skipped++; return; }
+    existingKeys.add(key);
+    const w = state.workers.find(x=>x.id===wid);
+    if(!w) return;
+    const holidayOvertime = !!(w.alwaysHolidayOvertime && sunHol);
+    newRows.push({date:dateKey, site_id:siteId, worker_id:wid, worker_name:w.name, hours:null, night, overtime:hours, holiday_overtime:holidayOvertime, role:null, band:null});
+  });
+  if(newRows.length===0){
+    if(skipped>0) alert(`その${skipped}名は既にこの現場・この日で登録済みのため、スキップしました。`);
+    return;
+  }
+  try{
+    const inserted = await sb("demen_entries", {method:"POST", body:newRows});
+    const mapped = inserted.map(r=>({
+      id:r.id, date:r.date, siteId:r.site_id, workerId:r.worker_id, workerName:r.worker_name,
+      hours: r.hours!=null?Number(r.hours):null, night:r.night, overtime:Number(r.overtime||0),
+      holidayOvertime:r.holiday_overtime, role:r.role, band:r.band
+    }));
+    state.entries[monthKey] = (state.entries[monthKey]||[]).concat(mapped);
+    closeModal();
+    renderEntry();
+    if(skipped>0) alert(`${skipped}名は既に登録済みのためスキップしました。`);
+  }catch(e){ reportError("残業の保存", e); }
+};
 window.openEntryModal = (siteId) => {
   const site = state.sites.find(s=>s.id===siteId);
   if(!site) return;

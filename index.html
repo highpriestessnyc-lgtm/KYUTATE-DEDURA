@@ -1179,6 +1179,10 @@ async function renderReport(){
       <div class="footer-note" style="margin:8px 0 0;">抜けていた出勤や、後から気づいた残業をこの月の中の好きな日で追加できます</div>
     </div>
     <div class="card">
+      <button class="btn primary" style="width:100%;" onclick="openOvertimeSheet()">⚡ 残業まとめ入力（作業員ごと）</button>
+      <div class="footer-note" style="margin:8px 0 0;">現場と人を選んで、その月の日付を並べて残業時間だけまとめて入力できます</div>
+    </div>
+    <div class="card">
       <div class="row" style="gap:8px;">
         <button class="btn ghost" style="flex:1;" onclick="exportEntriesCSV()">📄 明細をCSVで出す</button>
         <button class="btn ghost" style="flex:1;" onclick="exportWorkerSummaryCSV()">📄 作業員集計をCSVで出す</button>
@@ -1344,6 +1348,110 @@ window.addRecordForReportMonth = async () => {
   document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active", b.dataset.tab==="entry"));
   render();
   openCalendarPicker();
+};
+window.openOvertimeSheet = async () => {
+  await loadEntriesForMonth(state.reportMonth);
+  const siteOptions = state.sites.map(s=>`<option value="${s.id}">${s.category} ／ ${s.name}</option>`).join("");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>⚡ 残業まとめ入力</h3>
+        <div class="modal-sub">${state.reportMonth}</div>
+        <div class="field">
+          <label>現場</label>
+          <select class="plain" id="otSheetSite" style="width:100%" onchange="renderOvertimeSheetBody()">${siteOptions}</select>
+        </div>
+        <div class="field">
+          <label>作業員</label>
+          <select class="plain" id="otSheetWorker" style="width:100%" onchange="renderOvertimeSheetBody()"></select>
+        </div>
+        <div id="otSheetBody"></div>
+        <div class="btnbar">
+          <button class="btn ghost" onclick="closeModal()">閉じる</button>
+          <button class="btn primary" onclick="saveOvertimeSheet()">まとめて保存する</button>
+        </div>
+      </div>
+    </div>
+  `;
+  populateOvertimeSheetWorkers();
+  renderOvertimeSheetBody();
+};
+window.populateOvertimeSheetWorkers = () => {
+  const siteId = document.getElementById("otSheetSite").value;
+  const site = state.sites.find(s=>s.id===siteId);
+  const workers = site ? workersForSite(site) : state.workers;
+  const current = document.getElementById("otSheetWorker").value;
+  document.getElementById("otSheetWorker").innerHTML = workers.map(w=>`<option value="${w.id}" ${w.id===current?'selected':''}>${w.name}</option>`).join("");
+};
+window.renderOvertimeSheetBody = () => {
+  populateOvertimeSheetWorkers();
+  const siteId = document.getElementById("otSheetSite").value;
+  const workerId = document.getElementById("otSheetWorker").value;
+  const [y,m] = state.reportMonth.split("-").map(Number);
+  const daysInMonth = new Date(y,m,0).getDate();
+  const entries = state.entries[state.reportMonth]||[];
+  const byDate = {};
+  entries.forEach(e=>{ if(e.siteId===siteId && e.workerId===workerId) byDate[e.date]=e; });
+  const otOptions = (selectedVal) => Array.from({length:25},(_,i)=>i*0.5)
+    .map(v=>`<option value="${v}" ${Math.abs(v-selectedVal)<0.01?'selected':''}>${v}H</option>`).join("");
+  let rows = "";
+  for(let day=1; day<=daysInMonth; day++){
+    const dateStr = `${state.reportMonth}-${pad2(day)}`;
+    const existing = byDate[dateStr];
+    const dow = new Date(y,m-1,day).getDay();
+    const isWeekend = dow===0 || dow===6;
+    rows += `<div class="row between" style="padding:7px 0; border-bottom:1px solid var(--line); ${isWeekend?'color:var(--accent);':''}">
+      <span style="width:80px;">${m}/${day}(${DOW[dow]})${existing && existing.hours!=null?` <span style="font-size:11px; color:var(--sub);">・出勤${existing.hours}H</span>`:''}</span>
+      <select class="plain" data-ot-date="${dateStr}" data-existing-id="${existing?existing.id:''}" style="width:90px;">
+        ${otOptions(existing?(existing.overtime||0):0)}
+      </select>
+    </div>`;
+  }
+  document.getElementById("otSheetBody").innerHTML = `<div style="max-height:48vh; overflow-y:auto; margin-top:4px;">${rows}</div>`;
+};
+window.saveOvertimeSheet = async () => {
+  const siteId = document.getElementById("otSheetSite").value;
+  const workerId = document.getElementById("otSheetWorker").value;
+  const w = state.workers.find(x=>x.id===workerId);
+  if(!w) return;
+  const monthKey = state.reportMonth;
+  const selects = [...document.querySelectorAll("[data-ot-date]")];
+  const updates = [];
+  const inserts = [];
+  selects.forEach(sel=>{
+    const val = parseFloat(sel.value)||0;
+    const dateStr = sel.dataset.otDate;
+    const existingId = sel.dataset.existingId;
+    if(existingId){
+      const existing = (state.entries[monthKey]||[]).find(e=>e.id===existingId);
+      if(existing && Math.abs((existing.overtime||0)-val) > 0.001){
+        updates.push({id:existingId, overtime:val});
+      }
+    } else if(val>0){
+      inserts.push({date:dateStr, site_id:siteId, worker_id:workerId, worker_name:w.name, hours:null, night:false, overtime:val, holiday_overtime:false, role:null, band:null, double_day:false});
+    }
+  });
+  if(updates.length===0 && inserts.length===0){ alert("変更がありません"); return; }
+  try{
+    for(const u of updates){
+      await sb(`demen_entries?id=eq.${u.id}`, {method:"PATCH", prefer:"return=minimal", body:{overtime:u.overtime}});
+      const e = (state.entries[monthKey]||[]).find(x=>x.id===u.id);
+      if(e) e.overtime = u.overtime;
+    }
+    if(inserts.length>0){
+      const inserted = await sb("demen_entries", {method:"POST", body:inserts});
+      const mapped = inserted.map(r=>({
+        id:r.id, date:r.date, siteId:r.site_id, workerId:r.worker_id, workerName:r.worker_name,
+        hours: r.hours!=null?Number(r.hours):null, night:r.night, overtime:Number(r.overtime||0),
+        holidayOvertime:r.holiday_overtime, role:r.role, band:r.band, doubleDay: !!r.double_day
+      }));
+      state.entries[monthKey] = (state.entries[monthKey]||[]).concat(mapped);
+    }
+    const count = updates.length + inserts.length;
+    closeModal();
+    render();
+    alert(`${count}件、残業時間を更新しました。`);
+  }catch(e){ reportError("残業まとめの保存", e); }
 };
 window.shiftMonth = async (delta) => {
   const [y,m] = state.reportMonth.split("-").map(Number);

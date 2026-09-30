@@ -1146,15 +1146,17 @@ async function renderReport(){
   const perWorker = {};
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {id:key, name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayOt:0};
+    if(!perWorker[key]) perWorker[key] = {id:key, name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayOt:0, minSort:Infinity};
     perWorker[key].days.add(e.date);
     if(e.doubleDay) perWorker[key].extraDays += 1;
     perWorker[key].hours += (e.hours||0);
     if(e.night) perWorker[key].night += 1;
     perWorker[key].overtime += (e.overtime||0);
     if(e.holidayOvertime) perWorker[key].holidayOt += (e.hours||0)+(e.overtime||0);
+    const site = state.sites.find(s=>s.id===e.siteId);
+    if(site && site.sortOrder!=null && site.sortOrder < perWorker[key].minSort) perWorker[key].minSort = site.sortOrder;
   });
-  const workerRows = Object.values(perWorker).sort((a,b)=>(b.days.size+b.extraDays) - (a.days.size+a.extraDays));
+  const workerRows = Object.values(perWorker).sort((a,b)=> a.minSort - b.minSort || ((b.days.size+b.extraDays) - (a.days.size+a.extraDays)));
 
   // 現場別集計
   const perSite = {};
@@ -1326,15 +1328,17 @@ window.exportWorkerSummaryCSV = () => {
   const perWorker = {};
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0};
+    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity};
     perWorker[key].days.add(e.date);
     if(e.doubleDay) perWorker[key].extraDays += 1;
     perWorker[key].hours += (e.hours||0);
     if(e.night) perWorker[key].night += 1;
     perWorker[key].overtime += (e.overtime||0);
+    const site = state.sites.find(s=>s.id===e.siteId);
+    if(site && site.sortOrder!=null && site.sortOrder < perWorker[key].minSort) perWorker[key].minSort = site.sortOrder;
   });
   const rows = [["氏名","出勤日数","合計時間(H)","夜間回数","残業計(H)","概算給与(通常分のみ・円)"]];
-  Object.values(perWorker).sort((a,b)=>(b.days.size+b.extraDays)-(a.days.size+a.extraDays)).forEach(r=>{
+  Object.values(perWorker).sort((a,b)=> a.minSort - b.minSort || ((b.days.size+b.extraDays)-(a.days.size+a.extraDays))).forEach(r=>{
     rows.push([r.name, r.days.size+r.extraDays, r.hours.toFixed(1), r.night, r.overtime.toFixed(1), wage?Math.round(r.hours*wage):""]);
   });
   downloadCSV(`作業員集計_${monthKey}.csv`, rows);
@@ -1366,9 +1370,10 @@ window.openOvertimeSheet = async () => {
           <select class="plain" id="otSheetWorker" style="width:100%" onchange="renderOvertimeSheetBody()"></select>
         </div>
         <div id="otSheetBody"></div>
+        <div id="otSheetStatus" style="text-align:center; color:var(--good); font-weight:700; margin-top:8px; opacity:0; transition:opacity .3s;"></div>
         <div class="btnbar">
           <button class="btn ghost" onclick="closeModal()">閉じる</button>
-          <button class="btn primary" onclick="saveOvertimeSheet()">まとめて保存する</button>
+          <button class="btn primary" onclick="saveOvertimeSheet()">保存する（続けて次の人も入力できます）</button>
         </div>
       </div>
     </div>
@@ -1448,9 +1453,14 @@ window.saveOvertimeSheet = async () => {
       state.entries[monthKey] = (state.entries[monthKey]||[]).concat(mapped);
     }
     const count = updates.length + inserts.length;
-    closeModal();
     render();
-    alert(`${count}件、残業時間を更新しました。`);
+    renderOvertimeSheetBody();
+    const status = document.getElementById("otSheetStatus");
+    if(status){
+      status.textContent = `✓ ${count}件保存しました`;
+      status.style.opacity = "1";
+      setTimeout(()=>{ if(status) status.style.opacity = "0"; }, 1800);
+    }
   }catch(e){ reportError("残業まとめの保存", e); }
 };
 window.shiftMonth = async (delta) => {

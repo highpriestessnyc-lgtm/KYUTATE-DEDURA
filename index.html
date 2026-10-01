@@ -309,6 +309,7 @@ let state = {
   siteSearch: "",
   quickMode: false,
   wageRate: 0,
+  overtimeWageRate: 0,
 };
 
 async function loadAll(){
@@ -325,6 +326,7 @@ async function loadAll(){
     state.manualHoliday = settingsMap.manualHoliday || {};
     state.quickMode = !!settingsMap.quickMode;
     state.wageRate = settingsMap.wageRate || 0;
+    state.overtimeWageRate = settingsMap.overtimeWageRate || 0;
   }catch(e){
     reportError("データの読み込み", e);
     state.workers = []; state.sites = []; state.manualHoliday = {}; state.quickMode = false;
@@ -1166,6 +1168,7 @@ async function renderReport(){
   const [y,m] = monthKey.split("-").map(Number);
   const label = `${y}年${m}月`;
   const wage = state.wageRate || 0;
+  const overtimeWage = state.overtimeWageRate || 0;
 
   // 作業員別集計
   const perWorker = {};
@@ -1226,15 +1229,22 @@ async function renderReport(){
       </div>
     </div>
     <div class="card">
-      <div class="field" style="margin-bottom:0;">
-        <label>時給（経費・給与の概算用）</label>
-        <input type="number" step="10" id="wageRateInput" value="${wage||''}" placeholder="例：1000" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;" onchange="setWageRate(this.value)">
+      <div class="row" style="gap:8px;">
+        <div class="field" style="flex:1; margin-bottom:0;">
+          <label>時給</label>
+          <input type="number" step="10" id="wageRateInput" value="${wage||''}" placeholder="例：1030" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;" onchange="setWageRate(this.value)">
+        </div>
+        <div class="field" style="flex:1; margin-bottom:0;">
+          <label>残業時給（おおよそ）</label>
+          <input type="number" step="1" id="overtimeWageRateInput" value="${overtimeWage||''}" placeholder="例：1288" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;" onchange="setOvertimeWageRate(this.value)">
+        </div>
       </div>
+      <div class="footer-note" style="margin:8px 0 0;">残業の単価は人によって違う場合があるので、ここはあくまで概算用です。</div>
     </div>
     <div class="card">
       <div class="section-title">作業員別 集計（タップで内訳）</div>
       <table class="report">
-        <tr><th>氏名</th><th>出勤日数</th><th>合計時間</th><th>夜間回数</th><th>残業計</th>${wage?'<th>概算給与(通常分)</th>':''}</tr>
+        <tr><th>氏名</th><th>出勤日数</th><th>合計時間</th><th>夜間回数</th><th>残業計</th>${wage?'<th>概算給与</th>':''}</tr>
         ${workerRows.map(r=>`
           <tr onclick="openWorkerDetail('${r.id}')" style="cursor:pointer;">
             <td>${r.name}${(r.adjDays||r.adjOt)?' <span class="tag holiday" style="font-size:10px;">調整あり</span>':''}</td>
@@ -1242,22 +1252,22 @@ async function renderReport(){
             <td>${r.hours.toFixed(1)}H</td>
             <td>${r.night}回</td>
             <td>${(r.overtime + r.adjOt).toFixed(1)}H</td>
-            ${wage?`<td class="summary-total">¥${Math.round(r.hours*wage).toLocaleString()}</td>`:''}
+            ${wage?`<td class="summary-total">¥${Math.round(r.hours*wage + (r.overtime+r.adjOt)*overtimeWage).toLocaleString()}</td>`:''}
           </tr>`).join("") || `<tr><td colspan="${wage?6:5}" class="empty">まだ入力がありません</td></tr>`}
       </table>
     </div>
     <div class="card">
       <div class="section-title">現場別 集計</div>
       <table class="report">
-        <tr><th>現場</th><th>延べ日数</th><th>合計時間</th>${wage?'<th>概算経費(通常分)</th>':''}</tr>
+        <tr><th>現場</th><th>延べ日数</th><th>合計時間</th>${wage?'<th>概算経費</th>':''}</tr>
         ${siteRows.map(r=>`
-          <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td>${wage?`<td>¥${Math.round(r.hours*wage).toLocaleString()}</td>`:''}</tr>
+          <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td>${wage?`<td>¥${Math.round(r.hours*wage + r.overtime*overtimeWage).toLocaleString()}</td>`:''}</tr>
         `).join("") || `<tr><td colspan="${wage?4:3}" class="empty">まだ入力がありません</td></tr>`}
       </table>
-      ${wage ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line); font-weight:700; color:var(--accent);">現場合計 概算経費（通常時間のみ）：¥${Math.round(siteRows.reduce((sum,r)=>sum+r.hours*wage,0)).toLocaleString()}</div>` : ''}
+      ${wage ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line); font-weight:700; color:var(--accent);">現場合計 概算経費：¥${Math.round(siteRows.reduce((sum,r)=>sum+r.hours*wage+r.overtime*overtimeWage,0)).toLocaleString()}</div>` : ''}
     </div>
     <div class="footer-note">
-      「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。概算給与・概算経費は 時給 × 通常時間 のみで計算しています（残業代は人によって単価が違うため含んでいません。残業計の時間を見て、それぞれの単価で別途計算してください）。
+      「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。概算給与・概算経費は 時給×通常時間 ＋ 残業時給×残業時間 で計算しています（残業時給は会社のおおよその単価なので、人によって実際と差が出ることがあります）。
     </div>
   `;
   mainEl.innerHTML = html;
@@ -1268,6 +1278,12 @@ window.setWageRate = async (val) => {
   await saveSetting("wageRate", num);
   renderReport();
 };
+window.setOvertimeWageRate = async (val) => {
+  const num = parseFloat(val) || 0;
+  state.overtimeWageRate = num;
+  await saveSetting("overtimeWageRate", num);
+  renderReport();
+};
 window.openWorkerDetail = (workerId) => {
   const monthKey = state.reportMonth;
   const entries = (state.entries[monthKey]||[]).filter(e=>e.workerId===workerId).sort((a,b)=>a.date.localeCompare(b.date));
@@ -1275,8 +1291,7 @@ window.openWorkerDetail = (workerId) => {
   if(entries.length===0 && workerAdjustments.length===0) return;
   const name = entries[0] ? entries[0].workerName : workerAdjustments[0].workerName;
   const wage = state.wageRate || 0;
-
-  // 時間枠ごとの日数内訳（日額など hours が null のものは「日額」扱い）
+  const overtimeWage = state.overtimeWageRate || 0;
   const bucket = {};
   let totalHours = 0, totalOvertime = 0, nightCount = 0, extraDays = 0;
   const uniqueDates = new Set();
@@ -1297,7 +1312,7 @@ window.openWorkerDetail = (workerId) => {
     if(b==="日額") return -1;
     return parseFloat(b)-parseFloat(a);
   });
-  const estimatedPay = totalHours * wage;
+  const estimatedPay = totalHours * wage + totalOvertime * overtimeWage;
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
@@ -1311,7 +1326,7 @@ window.openWorkerDetail = (workerId) => {
           <div style="margin-top:10px; border-top:1px solid var(--line); padding-top:10px;">
             <div>合計出勤日数：<b>${uniqueDates.size + extraDays + adjDays}日</b>${extraDays?`<span style="color:var(--sub); font-size:12px;">（2日分×${extraDays}件含む）</span>`:''}${adjDays?`<span style="color:var(--accent); font-size:12px;">（調整${adjDays>0?'+':''}${adjDays}含む）</span>`:''}</div>
             <div>合計時間：<b>${totalHours.toFixed(1)}H</b>　残業計：<b>${totalOvertime.toFixed(1)}H</b>${adjOt?`<span style="color:var(--accent); font-size:12px;">（調整${adjOt>0?'+':''}${adjOt}含む）</span>`:''}　夜間：<b>${nightCount}回</b></div>
-            ${wage ? `<div style="margin-top:6px; color:var(--accent); font-weight:700;">概算給与（通常分のみ）：¥${Math.round(estimatedPay).toLocaleString()}</div><div style="font-size:12px; color:var(--sub);">残業代は単価が人によって違うため含んでいません。残業計 ${totalOvertime.toFixed(1)}H を別途計算してください。</div>` : ''}
+            ${wage ? `<div style="margin-top:6px; color:var(--accent); font-weight:700;">概算給与：¥${Math.round(estimatedPay).toLocaleString()}</div>${!overtimeWage && totalOvertime ? `<div style="font-size:12px; color:var(--sub);">残業時給が未設定のため、残業計 ${totalOvertime.toFixed(1)}H は含まれていません。</div>`:''}` : ''}
           </div>
         </div>
         ${workerAdjustments.length>0 ? `
@@ -1375,8 +1390,9 @@ window.exportWorkerSummaryCSV = () => {
   const entries = state.entries[monthKey]||[];
   const adjustments = state.adjustments[monthKey]||[];
   const wage = state.wageRate || 0;
+  const overtimeWage = state.overtimeWageRate || 0;
+  const FIXED_BUCKET_ORDER = ["16H","8H","7.5H","7H","6.5H","6H","5H","4H","3.5H","3H","2H","1H","日額"];
   const perWorker = {};
-  const allBucketKeys = new Set();
   entries.forEach(e=>{
     const key = e.workerId;
     if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity, adjDays:0, adjOt:0, buckets:{}};
@@ -1387,7 +1403,6 @@ window.exportWorkerSummaryCSV = () => {
     perWorker[key].overtime += (e.overtime||0);
     const bucketKey = e.hours!=null ? `${e.hours}H` : "日額";
     perWorker[key].buckets[bucketKey] = (perWorker[key].buckets[bucketKey]||0) + 1;
-    allBucketKeys.add(bucketKey);
     const site = state.sites.find(s=>s.id===e.siteId);
     if(site && site.sortOrder!=null && site.sortOrder < perWorker[key].minSort) perWorker[key].minSort = site.sortOrder;
   });
@@ -1397,21 +1412,18 @@ window.exportWorkerSummaryCSV = () => {
     perWorker[key].adjDays += a.daysDelta;
     perWorker[key].adjOt += a.overtimeDelta;
   });
-  const bucketKeysSorted = [...allBucketKeys].sort((a,b)=>{
-    if(a==="日額") return 1;
-    if(b==="日額") return -1;
-    return parseFloat(b)-parseFloat(a);
-  });
-  const header = ["氏名", ...bucketKeysSorted.map(k=>`${k}の日数`), "調整日数", "出勤日数(合計)", "合計時間(H)", "夜間回数", "残業計(H)", "概算給与(通常分のみ・円)"];
+  const header = ["氏名", "夜間回数", "残業計(H)", ...FIXED_BUCKET_ORDER, "調整日数", "出勤日数(合計)", "合計時間(H)", "概算給与(円)"];
   const rows = [header];
   Object.values(perWorker).sort((a,b)=> a.minSort - b.minSort || ((b.days.size+b.extraDays)-(a.days.size+a.extraDays))).forEach(r=>{
-    const bucketCols = bucketKeysSorted.map(k=>r.buckets[k]||"");
+    const bucketCols = FIXED_BUCKET_ORDER.map(k=>r.buckets[k]||"");
+    const totalOt = r.overtime+r.adjOt;
     rows.push([
-      r.name, ...bucketCols,
+      r.name, r.night, totalOt.toFixed(1),
+      ...bucketCols,
       r.adjDays||"",
       r.days.size+r.extraDays+r.adjDays,
-      r.hours.toFixed(1), r.night, (r.overtime+r.adjOt).toFixed(1),
-      wage?Math.round(r.hours*wage):""
+      r.hours.toFixed(1),
+      wage?Math.round(r.hours*wage + totalOt*overtimeWage):""
     ]);
   });
   downloadCSV(`作業員集計_${monthKey}.csv`, rows);

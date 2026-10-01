@@ -1376,26 +1376,43 @@ window.exportWorkerSummaryCSV = () => {
   const adjustments = state.adjustments[monthKey]||[];
   const wage = state.wageRate || 0;
   const perWorker = {};
+  const allBucketKeys = new Set();
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity, adjDays:0, adjOt:0};
+    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity, adjDays:0, adjOt:0, buckets:{}};
     perWorker[key].days.add(e.date);
     if(e.doubleDay) perWorker[key].extraDays += 1;
     perWorker[key].hours += (e.hours||0);
     if(e.night) perWorker[key].night += 1;
     perWorker[key].overtime += (e.overtime||0);
+    const bucketKey = e.hours!=null ? `${e.hours}H` : "日額";
+    perWorker[key].buckets[bucketKey] = (perWorker[key].buckets[bucketKey]||0) + 1;
+    allBucketKeys.add(bucketKey);
     const site = state.sites.find(s=>s.id===e.siteId);
     if(site && site.sortOrder!=null && site.sortOrder < perWorker[key].minSort) perWorker[key].minSort = site.sortOrder;
   });
   adjustments.forEach(a=>{
     const key = a.workerId;
-    if(!perWorker[key]) perWorker[key] = {name:a.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity, adjDays:0, adjOt:0};
+    if(!perWorker[key]) perWorker[key] = {name:a.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity, adjDays:0, adjOt:0, buckets:{}};
     perWorker[key].adjDays += a.daysDelta;
     perWorker[key].adjOt += a.overtimeDelta;
   });
-  const rows = [["氏名","出勤日数","合計時間(H)","夜間回数","残業計(H)","概算給与(通常分のみ・円)"]];
+  const bucketKeysSorted = [...allBucketKeys].sort((a,b)=>{
+    if(a==="日額") return 1;
+    if(b==="日額") return -1;
+    return parseFloat(b)-parseFloat(a);
+  });
+  const header = ["氏名", ...bucketKeysSorted.map(k=>`${k}の日数`), "調整日数", "出勤日数(合計)", "合計時間(H)", "夜間回数", "残業計(H)", "概算給与(通常分のみ・円)"];
+  const rows = [header];
   Object.values(perWorker).sort((a,b)=> a.minSort - b.minSort || ((b.days.size+b.extraDays)-(a.days.size+a.extraDays))).forEach(r=>{
-    rows.push([r.name, r.days.size+r.extraDays+r.adjDays, r.hours.toFixed(1), r.night, (r.overtime+r.adjOt).toFixed(1), wage?Math.round(r.hours*wage):""]);
+    const bucketCols = bucketKeysSorted.map(k=>r.buckets[k]||"");
+    rows.push([
+      r.name, ...bucketCols,
+      r.adjDays||"",
+      r.days.size+r.extraDays+r.adjDays,
+      r.hours.toFixed(1), r.night, (r.overtime+r.adjOt).toFixed(1),
+      wage?Math.round(r.hours*wage):""
+    ]);
   });
   downloadCSV(`作業員集計_${monthKey}.csv`, rows);
 };

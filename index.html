@@ -243,7 +243,8 @@ function isHoliday(dateObj, manualOverride){
 function isSunOrHoliday(dateObj, manualOverride){
   if(manualOverride !== undefined) return manualOverride;
   const s = ymd(dateObj);
-  return dateObj.getDay()===0 || JP_HOLIDAYS_2026.has(s);
+  const dow = dateObj.getDay();
+  return dow===0 || dow===6 || JP_HOLIDAYS_2026.has(s);
 }
 function hoursForWorker(rule, workerId, dayOfWeek){
   if(rule.type==="fixed"){

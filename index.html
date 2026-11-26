@@ -246,14 +246,37 @@ function isSunOrHoliday(dateObj, manualOverride){
   const dow = dateObj.getDay();
   return dow===0 || dow===6 || JP_HOLIDAYS_2026.has(s);
 }
-function hoursForWorker(rule, workerId, dayOfWeek){
+function isNationalHoliday(dateObj){
+  return JP_HOLIDAYS_2026.has(ymd(dateObj));
+}
+// 手動トグル（manualHoliday）は土日含みの「休日扱い」なので、平日に手動で休日にされた場合だけ祝日扱いに寄せる
+function isEffectiveHoliday(dateObj, manualOverride){
+  if(!dateObj) return false;
+  const dow = dateObj.getDay();
+  if(manualOverride !== undefined){
+    if(!manualOverride) return false;
+    if(dow===0 || dow===6) return isNationalHoliday(dateObj);
+    return true;
+  }
+  return isNationalHoliday(dateObj);
+}
+function hoursForWorker(rule, workerId, dayOfWeek, dateObj, manualOverride){
   if(rule.type==="fixed"){
     if(rule.hoursOverride && rule.hoursOverride[workerId]!=null) return rule.hoursOverride[workerId];
     return rule.hours;
   }
   if(rule.type==="weekday"){
+    // 祝日の時間が設定されていれば優先（0 = 日祝は休み。大山医院など）
+    if(dateObj && rule.holidayHours!=null && isEffectiveHoliday(dateObj, manualOverride)) return rule.holidayHours;
     return (rule.hoursByDay && rule.hoursByDay[dayOfWeek]!=null) ? rule.hoursByDay[dayOfWeek] : rule.defaultHours;
   }
+  return null;
+}
+// 入力画面表示用：その日に実際に適用される時間（曜日別・祝日ルール込み）
+function todayHoursFor(site, dateObj, manualOverride){
+  const rule = site.rule;
+  if(rule.type==="fixed") return rule.hours;
+  if(rule.type==="weekday") return hoursForWorker(rule, null, dateObj.getDay(), dateObj, manualOverride);
   return null;
 }
 
@@ -440,6 +463,8 @@ function renderEntry(){
     sitesInCat.forEach(s=>{
       const doneEntries = bySite[s.id] || [];
       const done = doneEntries.length>0;
+      const th = todayHoursFor(s, d, manualH);
+      const todayLabel = th!=null ? (th===0 ? "・今日は休み" : `・今日${th}H`) : "";
       const canQuick = state.quickMode && (s.rule.type==="fixed" || s.rule.type==="weekday" || s.rule.type==="day") && s.assignedWorkers && s.assignedWorkers.length>0;
 
       if(canQuick){
@@ -448,7 +473,7 @@ function renderEntry(){
         html += `<div class="site-btn quick ${done?'done':''}" style="grid-column:1 / -1;">
           <div class="row between" onclick="openEntryModal('${s.id}')">
             <div class="name">${s.name}</div>
-            <div class="meta">${ruleShortLabel(s.rule)}${done?` ・${doneEntries.length}件`:''}</div>
+            <div class="meta">${ruleShortLabel(s.rule)}${todayLabel}${done?` ・${doneEntries.length}件`:''}</div>
           </div>
           <div class="worker-list" style="margin-top:8px;">
             ${people.map(w=>`
@@ -464,7 +489,7 @@ function renderEntry(){
         html += `<div class="site-btn ${done?'done':''}" style="position:relative;">
           <div onclick="openEntryModal('${s.id}')">
             <div class="name">${s.name}</div>
-            <div class="meta">${ruleShortLabel(s.rule)}${done?` ・入力${doneEntries.length}件`:''}</div>
+            <div class="meta">${ruleShortLabel(s.rule)}${todayLabel}${done?` ・入力${doneEntries.length}件`:''}</div>
           </div>
           <button type="button" class="link-btn" style="margin-top:6px;" onclick="event.stopPropagation();openOvertimeOnlyModal('${s.id}')">🌙 残業だけ登録</button>
         </div>`;
@@ -472,6 +497,10 @@ function renderEntry(){
     });
     html += `</div>`;
   });
+
+  if(q && !state.sites.some(s=>s.name.includes(q))){
+    html += `<div class="card"><div class="empty">「${q}」に合う現場がありません</div></div>`;
+  }
 
   if(dayEntries.length>0){
     html += `<div class="cat-label">この日の入力済み一覧（残業を入れる時もここから）</div><div class="card">`;
@@ -598,7 +627,7 @@ window.quickToggleWorker = async (siteId, workerId) => {
       if(!w) return;
       const rule = site.rule;
       let hours = null;
-      if(rule.type==="fixed" || rule.type==="weekday") hours = hoursForWorker(rule, workerId, d.getDay());
+      if(rule.type==="fixed" || rule.type==="weekday") hours = hoursForWorker(rule, workerId, d.getDay(), d, state.manualHoliday[dateKey]);
       const holidayOvertime = !!(w.alwaysHolidayOvertime && sunHol);
       const [row] = await sb("demen_entries", { method:"POST", body:[{
         date:dateKey, site_id:siteId, worker_id:workerId, worker_name:w.name,
@@ -772,13 +801,13 @@ window.openEntryModal = (siteId) => {
       </div>
       ${showCustomHours ? `
       <div class="toggle-row">
-        <span>今日だけ時間を変える（通常${rule.type==="fixed"?rule.hours:rule.defaultHours}H）</span>
+        <span>今日だけ時間を変える（今日は${todayHoursFor(site, state.currentDate, state.manualHoliday[ymd(state.currentDate)])}H）</span>
         <label class="switch"><input type="checkbox" id="customHoursToggle" onchange="onCustomHoursToggle()"><span class="slider"></span></label>
       </div>
       <div class="field" id="customHoursField" style="display:none;">
         <label>今日の時間（H）　※ここで選んだ作業員だけに適用されます</label>
         <select class="plain" id="customHoursInput" style="width:100%; margin-bottom:12px;">
-          ${Array.from({length:25}, (_,i)=>i*0.5).map(v=>`<option value="${v}">${v}H</option>`).join("")}
+          ${Array.from({length:25}, (_,i)=>i*0.5).map(v=>`<option value="${v}" ${v===todayHoursFor(site, state.currentDate, state.manualHoliday[ymd(state.currentDate)])?'selected':''}>${v}H</option>`).join("")}
         </select>
         <div class="row between" style="margin-bottom:6px;">
           <label style="margin:0;">時間を変える人だけタップ（他の人は通常時間のまま）</label>
@@ -1036,7 +1065,7 @@ window.saveEntryModal = async (siteId) => {
       const isAttend = attendIds.has(wid) || isDouble;
       let hours = null;
       if(isAttend && rule.type!=="day"){
-        hours = customIds.has(wid) ? customVal : hoursForWorker(rule, wid, d.getDay());
+        hours = customIds.has(wid) ? customVal : hoursForWorker(rule, wid, d.getDay(), d, state.manualHoliday[dateKey]);
         if(isDouble) hours = hours*2;
       }
       const isNight = nightIds.has(wid);
@@ -1175,13 +1204,17 @@ async function renderReport(){
   const perWorker = {};
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {id:key, name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayOt:0, minSort:Infinity, adjDays:0, adjOt:0};
+    if(!perWorker[key]) perWorker[key] = {id:key, name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayOt:0, holidayHours:0, minSort:Infinity, adjDays:0, adjOt:0};
     perWorker[key].days.add(e.date);
     if(e.doubleDay) perWorker[key].extraDays += 1;
     perWorker[key].hours += (e.hours||0);
     if(e.night) perWorker[key].night += 1;
     perWorker[key].overtime += (e.overtime||0);
-    if(e.holidayOvertime) perWorker[key].holidayOt += (e.hours||0)+(e.overtime||0);
+    if(e.holidayOvertime){
+      perWorker[key].holidayOt += (e.hours||0)+(e.overtime||0);
+      // 「土日祝は常に残業扱い」の人の土日祝の本務時間は、通常単価ではなく残業単価で払う
+      perWorker[key].holidayHours += (e.hours||0);
+    }
     const site = state.sites.find(s=>s.id===e.siteId);
     if(site && site.sortOrder!=null && site.sortOrder < perWorker[key].minSort) perWorker[key].minSort = site.sortOrder;
   });
@@ -1198,10 +1231,11 @@ async function renderReport(){
   entries.forEach(e=>{
     const site = state.sites.find(s=>s.id===e.siteId);
     const key = e.siteId;
-    if(!perSite[key]) perSite[key] = {name: site?site.name:"?", days:new Set(), hours:0, overtime:0};
+    if(!perSite[key]) perSite[key] = {name: site?site.name:"?", days:new Set(), hours:0, overtime:0, holidayHours:0};
     perSite[key].days.add(e.date);
     perSite[key].hours += (e.hours||0);
     perSite[key].overtime += (e.overtime||0);
+    if(e.holidayOvertime) perSite[key].holidayHours += (e.hours||0);
   });
   const siteRows = Object.values(perSite).sort((a,b)=>b.days.size - a.days.size);
 
@@ -1252,8 +1286,8 @@ async function renderReport(){
             <td class="summary-total">${r.days.size + r.extraDays + r.adjDays}日</td>
             <td>${r.hours.toFixed(1)}H</td>
             <td>${r.night}回</td>
-            <td>${(r.overtime + r.adjOt).toFixed(1)}H</td>
-            ${wage?`<td class="summary-total">¥${Math.round(r.hours*wage + (r.overtime+r.adjOt)*overtimeWage).toLocaleString()}</td>`:''}
+            <td>${(r.overtime + r.adjOt + r.holidayHours).toFixed(1)}H${r.holidayHours?`<div style="font-size:10px; color:var(--sub);">うち休日${r.holidayHours.toFixed(1)}H</div>`:''}</td>
+            ${wage?`<td class="summary-total">¥${Math.round((r.hours - r.holidayHours)*wage + (r.overtime + r.adjOt + r.holidayHours)*overtimeWage).toLocaleString()}</td>`:''}
           </tr>`).join("") || `<tr><td colspan="${wage?6:5}" class="empty">まだ入力がありません</td></tr>`}
       </table>
     </div>
@@ -1262,13 +1296,13 @@ async function renderReport(){
       <table class="report">
         <tr><th>現場</th><th>延べ日数</th><th>合計時間</th>${wage?'<th>概算経費</th>':''}</tr>
         ${siteRows.map(r=>`
-          <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td>${wage?`<td>¥${Math.round(r.hours*wage + r.overtime*overtimeWage).toLocaleString()}</td>`:''}</tr>
+          <tr><td>${r.name}</td><td class="summary-total">${r.days.size}日</td><td>${r.hours.toFixed(1)}H</td>${wage?`<td>¥${Math.round((r.hours - r.holidayHours)*wage + (r.overtime + r.holidayHours)*overtimeWage).toLocaleString()}</td>`:''}</tr>
         `).join("") || `<tr><td colspan="${wage?4:3}" class="empty">まだ入力がありません</td></tr>`}
       </table>
-      ${wage ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line); font-weight:700; color:var(--accent);">現場合計 概算経費：¥${Math.round(siteRows.reduce((sum,r)=>sum+r.hours*wage+r.overtime*overtimeWage,0)).toLocaleString()}</div>` : ''}
+      ${wage ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line); font-weight:700; color:var(--accent);">現場合計 概算経費：¥${Math.round(siteRows.reduce((sum,r)=>sum+(r.hours - r.holidayHours)*wage+(r.overtime + r.holidayHours)*overtimeWage,0)).toLocaleString()}</div>` : ''}
     </div>
     <div class="footer-note">
-      「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。概算給与・概算経費は 時給×通常時間 ＋ 残業時給×残業時間 で計算しています（残業時給は会社のおおよその単価なので、人によって実際と差が出ることがあります）。
+      「合計時間」は固定・曜日別・班別・人数依存ルールのみ集計対象です。日額現場（マンション管理など）は日数のみカウントされ、時間には含まれません。概算給与・概算経費は 時給×通常時間 ＋ 残業時給×残業時間 で計算しています（残業時給は会社のおおよその単価なので、人によって実際と差が出ることがあります）。「土日祝は常に残業扱い」の人は、土日祝の本務時間も残業計に含め、残業時給で計算します。
     </div>
   `;
   mainEl.innerHTML = html;
@@ -1294,13 +1328,14 @@ window.openWorkerDetail = (workerId) => {
   const wage = state.wageRate || 0;
   const overtimeWage = state.overtimeWageRate || 0;
   const bucket = {};
-  let totalHours = 0, totalOvertime = 0, nightCount = 0, extraDays = 0;
+  let totalHours = 0, totalOvertime = 0, nightCount = 0, extraDays = 0, holidayHours = 0;
   const uniqueDates = new Set();
   entries.forEach(e=>{
     const key = e.hours!=null ? `${e.hours}H` : "日額";
     bucket[key] = (bucket[key]||0) + 1;
     totalHours += (e.hours||0);
     totalOvertime += (e.overtime||0);
+    if(e.holidayOvertime) holidayHours += (e.hours||0);
     if(e.night) nightCount++;
     if(e.doubleDay) extraDays += 1;
     uniqueDates.add(e.date);
@@ -1313,7 +1348,7 @@ window.openWorkerDetail = (workerId) => {
     if(b==="日額") return -1;
     return parseFloat(b)-parseFloat(a);
   });
-  const estimatedPay = totalHours * wage + totalOvertime * overtimeWage;
+  const estimatedPay = (totalHours - holidayHours) * wage + (totalOvertime + holidayHours) * overtimeWage;
 
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
@@ -1326,7 +1361,7 @@ window.openWorkerDetail = (workerId) => {
           </div>
           <div style="margin-top:10px; border-top:1px solid var(--line); padding-top:10px;">
             <div>合計出勤日数：<b>${uniqueDates.size + extraDays + adjDays}日</b>${extraDays?`<span style="color:var(--sub); font-size:12px;">（2日分×${extraDays}件含む）</span>`:''}${adjDays?`<span style="color:var(--accent); font-size:12px;">（調整${adjDays>0?'+':''}${adjDays}含む）</span>`:''}</div>
-            <div>合計時間：<b>${totalHours.toFixed(1)}H</b>　残業計：<b>${totalOvertime.toFixed(1)}H</b>${adjOt?`<span style="color:var(--accent); font-size:12px;">（調整${adjOt>0?'+':''}${adjOt}含む）</span>`:''}　夜間：<b>${nightCount}回</b></div>
+            <div>合計時間：<b>${totalHours.toFixed(1)}H</b>　残業計：<b>${(totalOvertime + holidayHours).toFixed(1)}H</b>${holidayHours?`<span style="color:var(--sub); font-size:12px;">（うち土日祝の全時間 ${holidayHours.toFixed(1)}H を含む）</span>`:''}${adjOt?`<span style="color:var(--accent); font-size:12px;">（調整${adjOt>0?'+':''}${adjOt}含む）</span>`:''}　夜間：<b>${nightCount}回</b></div>
             ${wage ? `<div style="margin-top:6px; color:var(--accent); font-weight:700;">概算給与：¥${Math.round(estimatedPay).toLocaleString()}</div>${!overtimeWage && totalOvertime ? `<div style="font-size:12px; color:var(--sub);">残業時給が未設定のため、残業計 ${totalOvertime.toFixed(1)}H は含まれていません。</div>`:''}` : ''}
           </div>
         </div>
@@ -1396,12 +1431,13 @@ window.exportWorkerSummaryCSV = () => {
   const perWorker = {};
   entries.forEach(e=>{
     const key = e.workerId;
-    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity, adjDays:0, adjOt:0, buckets:{}};
+    if(!perWorker[key]) perWorker[key] = {name:e.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayHours:0, minSort:Infinity, adjDays:0, adjOt:0, buckets:{}};
     perWorker[key].days.add(e.date);
     if(e.doubleDay) perWorker[key].extraDays += 1;
     perWorker[key].hours += (e.hours||0);
     if(e.night) perWorker[key].night += 1;
     perWorker[key].overtime += (e.overtime||0);
+    if(e.holidayOvertime) perWorker[key].holidayHours += (e.hours||0);
     const bucketKey = e.hours!=null ? `${e.hours}H` : "日額";
     perWorker[key].buckets[bucketKey] = (perWorker[key].buckets[bucketKey]||0) + 1;
     const site = state.sites.find(s=>s.id===e.siteId);
@@ -1409,7 +1445,7 @@ window.exportWorkerSummaryCSV = () => {
   });
   adjustments.forEach(a=>{
     const key = a.workerId;
-    if(!perWorker[key]) perWorker[key] = {name:a.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, minSort:Infinity, adjDays:0, adjOt:0, buckets:{}};
+    if(!perWorker[key]) perWorker[key] = {name:a.workerName, days:new Set(), extraDays:0, hours:0, night:0, overtime:0, holidayHours:0, minSort:Infinity, adjDays:0, adjOt:0, buckets:{}};
     perWorker[key].adjDays += a.daysDelta;
     perWorker[key].adjOt += a.overtimeDelta;
   });
@@ -1417,14 +1453,14 @@ window.exportWorkerSummaryCSV = () => {
   const rows = [header];
   Object.values(perWorker).sort((a,b)=> a.minSort - b.minSort || ((b.days.size+b.extraDays)-(a.days.size+a.extraDays))).forEach(r=>{
     const bucketCols = FIXED_BUCKET_ORDER.map(k=>r.buckets[k]||"");
-    const totalOt = r.overtime+r.adjOt;
+    const totalOt = r.overtime+r.adjOt+(r.holidayHours||0);
     rows.push([
       r.name, r.night, totalOt.toFixed(1),
       ...bucketCols,
       r.adjDays||"",
       r.days.size+r.extraDays+r.adjDays,
       r.hours.toFixed(1),
-      wage?Math.round(r.hours*wage + totalOt*overtimeWage):""
+      wage?Math.round((r.hours-(r.holidayHours||0))*wage + totalOt*overtimeWage):""
     ]);
   });
   downloadCSV(`作業員集計_${monthKey}.csv`, rows);
@@ -1768,6 +1804,10 @@ function renderRuleEditor(rule, site){
           `).join("")}
         </div>
       </div>
+      <div class="field">
+        <label>祝日の時間（H）　空欄なら曜日の時間を使用、0なら日祝は休み（例：大山医院）</label>
+        <input type="number" step="0.5" id="edit-rule-holiday-hours" value="${rule.holidayHours!=null?rule.holidayHours:''}" placeholder="空欄なら曜日通り" style="width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:14px;">
+      </div>
     `;
   }
   if(rule.type==="bands"){
@@ -1819,6 +1859,11 @@ function readRuleEditor(originalRule){
       if(inp.value !== "") hoursByDay[inp.dataset.weekday] = parseFloat(inp.value);
     });
     rule.hoursByDay = hoursByDay;
+    const holEl = document.getElementById("edit-rule-holiday-hours");
+    if(holEl){
+      if(holEl.value !== "") rule.holidayHours = parseFloat(holEl.value);
+      else delete rule.holidayHours;
+    }
   } else if(rule.type==="bands"){
     document.querySelectorAll("[data-band-hours]").forEach(inp=>{
       const band = rule.bands.find(b=>b.id===inp.dataset.bandHours);
